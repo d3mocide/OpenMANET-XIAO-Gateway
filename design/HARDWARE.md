@@ -80,8 +80,41 @@ Plus the chip and board-calibration file:
 `managed_components/morsemicro__halow/configs/sdkconfig.defaults.seeed_xiao_esp32s3-seeed_xiao_mm6108`
 from `morsemicro/halow` v2.11.2-esp32-2, whose header reads `# BOARD: Seeed XIAO ESP32S3` /
 `# HAT: Seeed XIAO WM6108`. These are the component author's own values for this exact pairing, not
-a guess — but they have still never been verified against a physical board. Step 1 of bring-up is
-the check.
+a guess.
+
+**Cross-checked against the HAT's own board files** — Seeed's
+[`WI-FI_HALOW_FGH100M_EXT01_V30.kicad_pcb`][hat-pcb] netlist and
+[`..._SCH_20241107.pdf`][hat-sch] (linked from the [product wiki][hat-wiki]). Every populated link
+matches the table above, so the Kconfig values are confirmed on paper. What is *not* yet confirmed
+is a physical board; step 1 of bring-up is still the check.
+
+[hat-wiki]: https://wiki.seeedstudio.com/getting_started_with_wifi_halow_module_for_xiao/
+[hat-pcb]: https://files.seeedstudio.com/wiki/wifi_halow/res/WI-FI_HALOW_FGH100M_EXT01_V30.kicad_pcb
+[hat-sch]: https://files.seeedstudio.com/wiki/wifi_halow/res/WI-FI_HALOW_FGH100M_EXT01_V30_SCH_20241107.pdf
+
+Each XIAO pad reaches the module through a series resistor, and **two of those resistors are
+marked DNP** (do not populate) on rev V3.0:
+
+| XIAO pad | GPIO | Link | Module pin | Populated? |
+|---|---|---|---|---|
+| D0 | 1 | R13 `0R` | `RESET_N` (8) | yes |
+| D1 | 2 | R10 **`DNP`** | `WAKEUP_IN` (6) | **no** |
+| D2 | 3 | R11 `0R` | `SPI_INT` | yes |
+| D3 | 4 | R21 `0R` | `SPI_CS` | yes |
+| D4 | 5 | R17 **`DNP`** | `BUSY` | **no** |
+| D8 | 7 | R14 `22R` | `SPI_CLK` | yes |
+| D9 | 8 | R12 `22R` | `SPI_MISO` | yes |
+| D10 | 9 | R16 `22R` | `SPI_MOSI` | yes |
+
+The two unpopulated signals are resolved on the HAT instead: `WAKEUP_IN` is pulled to `MOD_3V3`
+through R9 (10 K), so the module is permanently awake, and `BUSY` is pulled to GND through R15
+(10 K). The firmware's `CONFIG_MM_WAKE=2` and `CONFIG_MM_BUSY=5` therefore drive and sample pins
+that connect to nothing.
+
+That is almost certainly deliberate — Seeed chose the pull resistors that make the module behave
+without those lines — but it has a bring-up consequence: **GPIO 5 floats on the ESP32-S3 side.** If
+the driver samples BUSY and reads noise rather than a steady low, that is the cause, and an internal
+pull-down on GPIO 5 is the fix. Check this before suspecting the radio.
 
 **If you use a different HaLow HAT**, do not hand-edit these numbers. Copy the matching file from
 that same `configs/` directory in the fetched component (they ship configs for XIAO C3/C6/C5 and
@@ -96,7 +129,76 @@ Declared in [`../main/board.h`](../main/board.h), chosen to avoid every GPIO abo
 | Status LED | 21 | The XIAO's on-board user LED. Active **low** (the GPIO sinks current). |
 | Factory reset | 0 | The XIAO's BOOT button. Held low while pressed. |
 
-GPIO 6 and 43/44 (UART) are left free.
+## What's left for expansion
+
+The XIAO ESP32-S3 breaks out **11 GPIOs and nothing else** — D0–D10, plus 3V3/GND/5V. Every other
+pin on the chip is either committed on-module (flash, octal PSRAM, USB) or simply not brought to a
+pad, so 11 is the hard ceiling. GPIO 0 (BOOT) and GPIO 21 (LED) are on-board parts this firmware
+already uses; they are not pads you can wire to.
+
+Of the 11, the HaLow HAT claims eight and this firmware claims none of the rest. **Three pads are
+free:**
+
+| Pad | GPIO | Default alternate function | Notes |
+|---|---|---|---|
+| D5 | 6 | I²C SCL, ADC1_CH5 | Plain GPIO, no strapping role. |
+| D6 | 43 | UART0 TX | Free — the console is USB Serial/JTAG, not UART0. |
+| D7 | 44 | UART0 RX | Same. |
+
+The console point is worth stating precisely, because it is what makes a UART peripheral possible
+at all: `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y` puts logs and the REPL on the native USB peripheral
+(GPIO 19/20, not broken out), and ESP-IDF's *secondary* console exists only to cover the opposite
+case — `ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG` carries `depends on !ESP_CONSOLE_USB_SERIAL_JTAG`
+([`components/esp_system/Kconfig` L296-316, v5.5.1][idf-console]). Nothing in the app or the
+bootloader touches UART0. The ROM bootloader still emits its brief startup banner on GPIO 43 before
+the app runs; a peripheral on those pins will see that burst once per reset and should ignore it.
+
+[idf-console]: https://github.com/espressif/esp-idf/blob/v5.5.1/components/esp_system/Kconfig#L296
+
+Three pads is enough for one UART device (2 pins) plus one interrupt or enable line — or one I²C
+bus, since the ESP32-S3's GPIO matrix will route SDA/SCL to any two pins. It is *not* enough for a
+UART device and an I²C bus at the same time.
+
+**You do not have to solder to the XIAO.** The HAT mirrors all 14 XIAO pads onto two 2.54 mm
+7-pin rows, CN3 (D0–D6) and CN4 (D7, D8, D9, D10, 3V3, GND, 5V), so the free pads and power are
+reachable from the top of the stack.
+
+### The two DNP pads, and why not to count on them
+
+D1 (GPIO 2) and D4 (GPIO 5) are electrically unconnected on rev V3.0 — see the DNP table above —
+so in principle the count is five, not three. Treat that as a bonus you may not get:
+
+- The firmware's Kconfig claims both, and they came from Morse Micro's own board config. Reusing
+  them means diverging from the vendor's file, which is exactly the kind of edit that looks like
+  cleanup to the next person.
+- A later HAT revision can populate R10/R17 without renaming the product. Then the pin is shared
+  with `WAKEUP_IN` or `BUSY` and the failure is a radio that misbehaves intermittently.
+
+If you want them anyway, verify continuity on the board in front of you first (D1 and D4 pads to
+the module) and set `CONFIG_MM_WAKE` / `CONFIG_MM_BUSY` to unused pin numbers rather than leaving
+the driver pointed at pins another peripheral is driving.
+
+### Adding a GPS
+
+A GPS is the obvious candidate for the free pins, and it fits — this is the "real GPS" option in
+[`ROADMAP.md`](ROADMAP.md)'s self-beacon section.
+
+An **ATGM336H** (or any NMEA-over-UART module: NEO-6M/8M, L76K) needs exactly what's available:
+
+| GPS pin | Connect to | Note |
+|---|---|---|
+| VCC | 3V3 | 2.7–3.6 V part. ~25 mA acquiring, ~20 mA tracking — negligible against the XIAO's 3V3 rail. |
+| GND | GND | |
+| TX | D7 / GPIO 44 | GPS → ESP32-S3. The one line you actually need. |
+| RX | D6 / GPIO 43 | Only needed to send configuration (baud, rate, constellation). |
+| PPS | D5 / GPIO 6 | Optional. Takes the last free pad. |
+
+Software side: any of UART0/1/2 driven onto those pins via the GPIO matrix, 9600 8N1 by default,
+parse `$GNRMC`/`$GNGGA`. No new power rail, no level shifting, no bus contention. The real cost is
+antenna placement and a third radio's worth of interference to think about, not GPIO.
+
+If PPS isn't needed, D5/GPIO 6 stays free for something else — a battery-sense divider, a second
+status LED, a hardware button.
 
 ## Assembly
 
@@ -127,10 +229,32 @@ practical. For field use, height beats everything else.
 | Source | Notes |
 |---|---|
 | USB-C | Flashing and console. Fine for all bench work. |
-| LiPo on the XIAO's BAT pads | The XIAO ESP32-S3 has an on-board charger and battery pads underneath. |
+| LiPo on the XIAO's BAT pads | The XIAO ESP32-S3 has an on-board charger and battery pads underneath. **See the warning below — battery-only may not power the HaLow front end.** |
+
+### The HaLow HAT needs the 5V rail, and the battery doesn't feed it
+
+The FGH100M-H takes **three** supplies, not one: `VBAT` 3.0–3.6 V, `VDD_IO` 1.62–3.6 V, and
+**`VDD_FEM` 3.0–5.25 V, typ. 5 V** — the front-end module, i.e. the PA and LNA
+([Quectel FGH100M-H specification v1.0.0][fgh-spec], Electrical Features; its ordering code
+`FGH100MHAAMD` is also where `CONFIG_MM_BCF_FILE` comes from). On Seeed's HAT, `VDD_FEM` (module
+pin 4) is fed from the XIAO's **5V pad** through ferrite FB2, while `VBAT`/`VDD_IO` come from 3V3
+through FB1.
+
+The XIAO ESP32-S3's 5V pad is VBUS. **Running on a LiPo alone leaves it at 0 V**, so the radio
+core would power up over 3V3 — SPI works, `gwcfg-radio` prints versions — while the PA and LNA
+have no supply at all. The symptom is a scan that finds nothing and a link that never associates:
+identical to a region mismatch or a missing antenna, and step 1 of bring-up would pass.
+
+This is untested on hardware and is the first thing to check before trusting a battery build. If it
+proves out, the options are a 5 V boost into the 5V pad, or lifting FB2 and feeding `MOD_5V` from
+3V3 — legal against the 3.0 V minimum, at the cost of PA headroom. Do not simply bridge 3V3 to the
+XIAO's 5V pad: that back-feeds the board's charger and regulator input.
+
+[fgh-spec]: https://files.seeedstudio.com/wiki/wifi_halow/res/Quectel_FGH100M-H_Short-Range_Module_Specification_V1.0.0_Preliminary_20241018.pdf
 
 Budget for the HaLow radio drawing meaningfully more than a bare XIAO, particularly while
-transmitting. The firmware currently does **no** power management at all — no light sleep, no duty
+transmitting. The XIAO's 3V3 regulator is good for roughly 700 mA total, which is the ceiling any
+added peripheral shares with the radio. The firmware currently does **no** power management at all — no light sleep, no duty
 cycling, no battery voltage sensing. See [`ROADMAP.md`](ROADMAP.md) for what a power pass would
 involve. Irrelevant for a first hardware test; not irrelevant for a deployment.
 
