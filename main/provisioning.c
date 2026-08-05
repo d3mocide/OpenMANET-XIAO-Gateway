@@ -227,8 +227,20 @@ esp_err_t provisioning_start_console(void)
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
     repl_config.prompt = "xiao-gw>";
 
-    esp_console_dev_uart_config_t uart_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
-    esp_err_t err = esp_console_new_repl_uart(&uart_config, &repl_config, &repl);
+    esp_err_t err;
+    /* Which peripheral esp_console attaches to must match sdkconfig's
+     * ESP_CONSOLE_* choice (sdkconfig.defaults sets USB_SERIAL_JTAG for the
+     * XIAO S3's native USB port) - mirrors ESP-IDF's own console example. */
+#if defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG)
+    esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+    err = esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl);
+#elif defined(CONFIG_ESP_CONSOLE_USB_CDC)
+    esp_console_dev_usb_cdc_config_t hw_config = ESP_CONSOLE_DEV_CDC_CONFIG_DEFAULT();
+    err = esp_console_new_repl_usb_cdc(&hw_config, &repl_config, &repl);
+#else
+    esp_console_dev_uart_config_t hw_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
+    err = esp_console_new_repl_uart(&hw_config, &repl_config, &repl);
+#endif
     if (err != ESP_OK) {
         return err;
     }

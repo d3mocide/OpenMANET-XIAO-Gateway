@@ -20,5 +20,8 @@ CONFIG_LWIP_NETBUF_RECVINFO=y
 # radio (uplink_halow), so plain AP mode is sufficient here.
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 
-# esp_console is used by provisioning.c for the runtime config CLI.
-CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+# esp_console is used by provisioning.c for the runtime config CLI. The XIAO
+# ESP32-S3's USB-C port is wired to the chip's native USB Serial/JTAG
+# controller, not an external UART bridge - CONFIG_ESP_CONSOLE_UART_DEFAULT
+# would leave both logs and the console silent over that same cable.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
