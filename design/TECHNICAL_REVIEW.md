@@ -203,7 +203,50 @@ backtrace after the fact. Flash cost is trivial against 8MB.
 
 ## Deferred: OTA
 
-**Status: open decision, deliberately not made yet.**
+**Status: partition layout DONE; update delivery still deferred.**
+
+The decision was split in two, because the two halves have opposite risk profiles:
+
+- **Part A - the partition layout (done).** Pure layout: no new code, no new attack surface, no
+  runtime behaviour change. This is the half that gets expensive to defer, because retrofitting a
+  partition table onto already-deployed units costs a USB cable per unit - exactly the cost OTA
+  exists to remove. Now a dual-OTA table with two 3MB slots, keeping the previous app ceiling
+  unchanged.
+- **Part B - the update mechanism (still deferred).** This is where the risk is, and it is a
+  direct consequence of finding 4 above. An OTA endpoint means *anyone who can reach the web UI
+  can replace the firmware*. That UI still has no authentication - the SoftAP passphrase is the
+  only boundary. Promoting "can change my config" to "can replace my firmware" on an
+  unauthenticated endpoint is an escalation, not an increment. **Authentication must land before
+  any firmware-upload path exists.**
+
+Also intentionally not enabled yet: `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. With rollback on, an
+app that never calls `esp_ota_mark_app_valid_cancel_rollback()` gets reverted on every boot. That
+call belongs with Part B, so turning rollback on now would break booting for no benefit.
+
+### The layout that was adopted
+
+```
+nvs        0x009000    24K
+phy_init   0x00F000     4K
+otadata    0x010000     8K
+ota_0      0x020000     3M   <- app lives here now, NOT 0x10000
+ota_1      0x320000     3M
+coredump   0x620000    64K
+                       ---
+total      0x630000   6.19MB of 8MB, ~1.81MB unallocated
+```
+
+No `factory` partition: at 3MB per slot a third app copy needs 9MB and doesn't fit. With blank or
+invalid otadata the bootloader falls back to `ota_0`, which is where a fresh flash writes. ESP-IDF's
+own reference tables keep a factory slot only because they assume 1MB apps.
+
+**The trap this introduces:** the app moved from `0x10000` to `0x20000`, and `otadata` at
+`0x10000` must receive the generated `ota_data_initial.bin`. The web flasher's manifest
+(`.github/workflows/build-firmware.yml`) encodes both. A mismatch produces a flash that reports
+success and then doesn't boot - so the workflow now asserts its offsets against the build's own
+`flash_args` and fails the job on disagreement, rather than trusting a hand-maintained heredoc.
+
+### The original analysis, for the record
 
 The current table has a single 3MB `factory` slot, so every firmware update on a deployed unit
 requires a USB cable. 8MB of flash comfortably fits a dual-OTA layout (two ~3MB app slots plus
@@ -229,11 +272,19 @@ i.e. keeping today's ceiling exactly, losing nothing - costs roughly 6.1MB of th
 Two 2MB slots would also hold the current binary (with ~18% headroom) if more room were wanted
 elsewhere, but there's no reason to take that tradeoff at 8MB.
 
-**What to decide it on:** the remaining question is not "does it fit" but "has the feature set
-stopped moving." If the answer is yes, dual 3MB OTA is a safe, non-compromising choice and should
-just be done. Re-measure after the self-beacon and any auth work land, then switch in one
-deliberate change. `partitions.csv` leaves the flash tail unallocated specifically so this stays
-possible.
+**What it was decided on:** capacity turned out not to be the constraint - two 3MB slots fit with
+~1.81MB to spare while giving up nothing, so waiting for the feature set to settle would have
+bought no information that could change the slot size. The layout was adopted immediately; the
+delivery mechanism, which *does* depend on unfinished work (authentication), was not.
+
+**Still to do for Part B**, in order:
+
+1. Authentication on the web UI. Nothing else should ship first.
+2. An update path - `esp_https_ota` pulling from a known URL, or an authenticated upload endpoint.
+3. `esp_ota_mark_app_valid_cancel_rollback()` in the app, then enable
+   `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`.
+4. A real end-to-end update test on hardware, including a deliberately bad image, before any of it
+   is relied on in the field.
 
 **The cost of waiting** is that any unit deployed before the switch needs a physical cable to move
 to an OTA-capable table. If units are going out to people who can't easily bring them back, make
