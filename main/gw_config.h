@@ -30,7 +30,14 @@ extern "C" {
  * fall back to defaults and say so, instead of loading garbage into a
  * deployed unit. */
 #define GW_CONFIG_MAGIC   0x4F4D4757u /* "OMGW" */
-#define GW_CONFIG_VERSION 1u
+/* v2: default SoftAP subnet moved from 192.168.50.0/24 to 172.16.50.0/24.
+ * The struct layout is unchanged, so the bump is not strictly required to read
+ * a v1 blob - it is deliberate, so that any unit already provisioned on a
+ * bench picks up the new default instead of silently staying on a subnet that
+ * collides with the phone-hotspot and home-router space. A v1 blob is
+ * discarded with a log line and the unit falls back to defaults; reprovision
+ * it via the web UI or `gwcfg-*`. */
+#define GW_CONFIG_VERSION 2u
 
 /* Security modes the HaLow uplink STA can be configured for. Must match
  * whatever the associated Pi's HaLow AP is running (DESIGN.md §4.1/§6.3) -

@@ -7,6 +7,9 @@ idf_component_register(
         "ip_forward_nat.c"
         "cot_relay.c"
         "web_ui.c"
+        "status_led.c"
+        "factory_reset.c"
+        "log_buffer.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -19,6 +22,7 @@ idf_component_register(
         esp_timer
         esp_app_format
         app_update
+        esp_driver_gpio
         json
     EMBED_FILES "web_ui.html"
 )

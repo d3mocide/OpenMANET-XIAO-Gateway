@@ -54,7 +54,7 @@ arrival detection meaningless.
 
 **What was wrong.** `esp_netif_napt_enable()` was called on the **uplink** netif. It belongs on
 the **SoftAP** netif. SoftAP client traffic would have left the HaLow radio with untranslated
-`192.168.50.x` source addresses - unroutable on the mesh, presenting as "phone associates to the
+`172.16.50.x` source addresses - unroutable on the mesh, presenting as "phone associates to the
 gateway but has no connectivity."
 
 **How it was verified.** Three independent upstream sources agree:
@@ -144,11 +144,16 @@ unit either. The web UI surfaces the specific reason rather than a generic 400.
   there indefinitely, never retrying, never reporting. Now bounded: wait
   `DHCP_LEASE_TIMEOUT_MS`, restart the DHCP client in place (fixes the transient cases cheaply),
   and on continued failure fall back to re-associating.
-  *Constraint worth knowing:* the re-associate path reuses `mmhalow_connect()`, which the existing
+  *Constraint worth knowing:* the re-associate path reused `mmhalow_connect()`, which the existing
   reconnect loop already assumed is re-callable. A true radio-level disconnect would be cleaner,
-  but no `mmhalow_disconnect()` could be confirmed against the real component headers, and this
-  fix deliberately uses only APIs already exercised by this codebase rather than a guessed one.
-  **Confirm against the component headers during bring-up.**
+  but no `mmhalow_disconnect()` could be confirmed at the time, and the fix deliberately used only
+  APIs already exercised by this codebase rather than a guessed one.
+  **Update (readiness pass, 2026-08-05): it exists.** `mmhalow.h` in `morsemicro/halow`
+  v2.11.2-esp32-2 declares `esp_err_t mmhalow_disconnect()`, implemented as `mmwlan_sta_disable()`
+  — found by fetching the component from the ESP Component Registry and reading the header rather
+  than inferring from the examples. The recovery path now disconnects before re-associating.
+  *Lesson worth keeping alongside the one at the top of this document: "couldn't confirm it" is not
+  "it doesn't exist", and the cost of actually fetching the dependency and looking was minutes.*
 - **Slow-failing connect attempts** (`uplink_halow.c`). `mm_sta_state_cb` never signalled on
   `MMWLAN_STA_DISABLED`, so a fast association failure still burned the full 15 s timeout before
   retrying. It now signals both outcomes, with `halow_sta_connect()` re-checking `s_associated`
@@ -305,10 +310,11 @@ This has been added to the build-order checklist in `PROGRESS.md` as step 4a.
 
 ### Confirm during bring-up
 
-- Whether the component exposes a disconnect/deinit API, which would give the DHCP-failure path a
-  cleaner recovery than re-calling `mmhalow_connect()` (see the Medium section).
+- ~~Whether the component exposes a disconnect/deinit API.~~ **Answered:** `mmhalow_disconnect()`
+  and `mmhalow_deinit()` both exist; the DHCP-failure path now uses the former.
 - That `CONFIG_MM_*` pin/BCF values match the physical board - still copied from Seeed's reference
-  pairing and never checked against hardware.
+  pairing and never checked against hardware. `gwcfg-radio` is the check, and the firmware runs it
+  automatically at boot.
 - The real `CONFIG_HALOW_COUNTRY_CODE` for the deployment, and whether it matches the Pi's
   regulatory domain (`PROGRESS.md` open question 3 - the one that genuinely blocks association).
 
@@ -336,7 +342,7 @@ changeable at any time thereafter, exactly like the Wi-Fi passphrase.
 
 ### No TLS
 
-No CA will issue a certificate for `192.168.50.1`, and a self-signed certificate trains users to
+No CA will issue a certificate for `172.16.50.1`, and a self-signed certificate trains users to
 click through browser warnings - which is worse than no TLS, because it erodes the one signal that
 matters elsewhere. TLS also costs RAM on a device already running NAT and the CoT relay.
 
@@ -352,7 +358,7 @@ because a team may share the Wi-Fi passphrase without every member being an admi
 `HMAC(stored_key, nonce)`; the password itself never transits.
 
 **Constraint that shapes the implementation:** `crypto.subtle` is only exposed in *secure
-contexts*, and `http://192.168.50.1` is not one (only `localhost` is treated as trustworthy over
+contexts*, and `http://172.16.50.1` is not one (only `localhost` is treated as trustworthy over
 plain HTTP). WebCrypto is therefore unavailable and a small SHA-256/HMAC implementation must be
 bundled into the embedded page - roughly 2KB. This was accepted deliberately; do not "simplify" it
 back to `crypto.subtle` later, it will silently be `undefined` on the device.

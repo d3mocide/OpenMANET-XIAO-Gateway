@@ -5,18 +5,25 @@
 
 #include "provisioning.h"
 
+#include "cot_relay.h"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lwip/inet.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "uplink_halow.h"
 
 static const char *TAG = "provisioning";
 
 #define GWCFG_NVS_NAMESPACE "gwcfg"
 #define GWCFG_NVS_KEY       "config"
+
+/* Generous compared to the web UI's budget: nothing is waiting on a socket
+ * here, and a console scan is a deliberate, attended action. */
+#define GWCFG_SCAN_TIMEOUT_MS 12000
 
 /* Points at the app's live in-RAM config so console commands can edit it
  * directly; set by provisioning_register_console_commands(). */
@@ -57,15 +64,24 @@ void provisioning_get_defaults(gw_config_t *cfg)
     cfg->uplink.psk[0] = '\0';
     cfg->uplink.security = GW_SECURITY_OPEN;
 
-    /* Local client-facing SoftAP (DESIGN.md §4.2), default subnet matches
-     * the example in the design doc's network diagram. */
+    /* Local client-facing SoftAP (DESIGN.md §4.2).
+     *
+     * 172.16.50.0/24, not 192.168.x: this subnet has to coexist with whatever
+     * the phone or tablet was last attached to, and with the mesh subnet on
+     * the far side of the NAT. 192.168.0/1/4/50.x are heavily used by home
+     * routers, phone hotspots and other ESP32 SoftAPs (esp_netif's own default
+     * is 192.168.4.1), and an overlap between a client's remembered network
+     * and this one produces routing behaviour that is very hard to diagnose in
+     * the field. 172.16.0.0/12 is the least-trafficked of the three RFC1918
+     * blocks. Every XIAO node can safely use the same subnet - each one NATs
+     * behind its own uplink address, so they never see each other's. */
     strlcpy(cfg->softap.ssid, "xiao-gateway", sizeof(cfg->softap.ssid));
     strlcpy(cfg->softap.psk, "openmanet", sizeof(cfg->softap.psk));
     cfg->softap.channel = 6;
     cfg->softap.max_connections = 8;
     cfg->softap.use_custom_subnet = true;
-    strlcpy(cfg->softap.ip, "192.168.50.1", sizeof(cfg->softap.ip));
-    strlcpy(cfg->softap.gateway, "192.168.50.1", sizeof(cfg->softap.gateway));
+    strlcpy(cfg->softap.ip, "172.16.50.1", sizeof(cfg->softap.ip));
+    strlcpy(cfg->softap.gateway, "172.16.50.1", sizeof(cfg->softap.gateway));
     strlcpy(cfg->softap.netmask, "255.255.255.0", sizeof(cfg->softap.netmask));
 
     /* ATAK CoT multicast group (DESIGN.md §4.3/§5.4). */
@@ -348,6 +364,104 @@ static int cmd_gwcfg_set_softap(int argc, char **argv)
     return 0;
 }
 
+/* Bring-up commands. These don't touch config at all - they exist because the
+ * serial console is the one interface guaranteed to work when the SoftAP
+ * hasn't come up, and the questions they answer ("does the radio respond?",
+ * "is the AP visible?", "how strong?") are the first three asked of a node
+ * that isn't associating. */
+static int cmd_gwcfg_status(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    uplink_link_state_t state = uplink_halow_get_link_state();
+    printf("uplink state  : %s\n", uplink_halow_link_state_name(state));
+
+    int32_t rssi = uplink_halow_get_rssi();
+    if (rssi == INT32_MIN) {
+        printf("uplink RSSI   : (not associated)\n");
+    } else {
+        printf("uplink RSSI   : %" PRId32 " dBm\n", rssi);
+    }
+
+    esp_netif_t *uplink_netif = uplink_halow_get_netif();
+    esp_netif_ip_info_t ip_info;
+    if (uplink_netif != NULL && esp_netif_get_ip_info(uplink_netif, &ip_info) == ESP_OK &&
+        ip_info.ip.addr != 0) {
+        printf("uplink IP     : " IPSTR "\n", IP2STR(&ip_info.ip));
+        printf("uplink gw     : " IPSTR "\n", IP2STR(&ip_info.gw));
+    } else {
+        printf("uplink IP     : (no lease)\n");
+    }
+
+    printf("cot relay     : %s\n", cot_relay_is_running() ? "running" : "not started");
+    printf("country code  : %s (build-time, not settable here)\n", CONFIG_HALOW_COUNTRY_CODE);
+    printf("free heap     : %u bytes\n", (unsigned)esp_get_free_heap_size());
+    return 0;
+}
+
+static int cmd_gwcfg_radio(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    if (!uplink_halow_is_ready()) {
+        printf("radio not initialized - check CONFIG_MM_* pins/BCF (design/HARDWARE.md)\n");
+        return 1;
+    }
+    uplink_halow_log_radio_info();
+    return 0;
+}
+
+static void scan_print_cb(const uplink_scan_result_t *result, void *ctx)
+{
+    unsigned *n = (unsigned *)ctx;
+    (*n)++;
+    /* Frequency is formatted with integer arithmetic rather than %f on a
+     * double. CONFIG_LIBC_NEWLIB_NANO_FORMAT is off in this build so %f would
+     * work today, but it is exactly the kind of knob someone reaches for to
+     * shrink a binary later - and the failure mode is a scan table that prints
+     * garbage frequencies during bring-up, which is when it's least welcome. */
+    unsigned mhz = (unsigned)(result->freq_hz / 1000000u);
+    unsigned khz = (unsigned)((result->freq_hz % 1000000u) / 1000u);
+    printf("%-32s %02x:%02x:%02x:%02x:%02x:%02x  %4d dBm  %4u.%03u MHz  %2u MHz\n",
+           result->ssid[0] ? result->ssid : "(hidden)", result->bssid[0], result->bssid[1],
+           result->bssid[2], result->bssid[3], result->bssid[4], result->bssid[5], result->rssi,
+           mhz, khz, result->bw_mhz);
+}
+
+static int cmd_gwcfg_scan(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    if (!uplink_halow_is_ready()) {
+        printf("radio not initialized - nothing to scan with\n");
+        return 1;
+    }
+
+    printf("scanning (regulatory domain %s)...\n", CONFIG_HALOW_COUNTRY_CODE);
+    printf("%-32s %-17s  %8s  %11s  %s\n", "SSID", "BSSID", "RSSI", "FREQ", "BW");
+
+    unsigned found = 0;
+    esp_err_t err = uplink_halow_scan(scan_print_cb, &found, GWCFG_SCAN_TIMEOUT_MS);
+    if (err != ESP_OK && err != ESP_ERR_TIMEOUT) {
+        printf("scan failed: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    printf("%u AP(s) found%s\n", found, err == ESP_ERR_TIMEOUT ? " (scan timed out, partial)" : "");
+    if (found == 0) {
+        /* Said explicitly because the obvious conclusion ("the AP is off") is
+         * only one of two, and the other one is a build-time setting that
+         * can't be fixed from this console. */
+        printf("note: only channels legal in '%s' were scanned. An AP on a channel outside\n"
+               "      this build's regulatory domain is invisible here - if the Pi uses a\n"
+               "      different country, reflash with a matching region build.\n",
+               CONFIG_HALOW_COUNTRY_CODE);
+    }
+    return 0;
+}
+
 static int cmd_gwcfg_save(int argc, char **argv)
 {
     (void)argc;
@@ -397,6 +511,9 @@ esp_err_t provisioning_register_console_commands(gw_config_t *cfg)
         { .command = "gwcfg-set-softap", .help = "Set local SoftAP config", .hint = NULL, .func = &cmd_gwcfg_set_softap },
         { .command = "gwcfg-save", .help = "Persist current config to NVS", .hint = NULL, .func = &cmd_gwcfg_save },
         { .command = "gwcfg-reset", .help = "Reset in-RAM config to built-in defaults", .hint = NULL, .func = &cmd_gwcfg_reset },
+        { .command = "gwcfg-status", .help = "Show live uplink/relay state, RSSI and IPs", .hint = NULL, .func = &cmd_gwcfg_status },
+        { .command = "gwcfg-scan", .help = "Scan for HaLow APs on this build's channel list", .hint = NULL, .func = &cmd_gwcfg_scan },
+        { .command = "gwcfg-radio", .help = "Print HaLow BCF/firmware versions (proves SPI works)", .hint = NULL, .func = &cmd_gwcfg_radio },
     };
 
     for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {

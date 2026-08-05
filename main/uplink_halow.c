@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <string.h>
 
 #include "uplink_halow.h"
@@ -31,12 +32,35 @@ static const char *TAG = "uplink_halow";
 
 static gw_uplink_config_t s_cfg;
 static esp_netif_t *s_netif = NULL;
+static bool s_ready = false;               /* uplink_halow_init() succeeded */
 static volatile bool s_associated = false; /* 802.11 association only */
+static volatile bool s_associating = false;
 static volatile bool s_has_ip = false;     /* the signal callers actually want */
 static uplink_halow_state_cb_t s_cb = NULL;
 static void *s_cb_ctx = NULL;
 static TaskHandle_t s_reconnect_task_handle = NULL;
 static SemaphoreHandle_t s_connect_sem = NULL;
+
+/* Serializes uplink_halow_scan(): the driver takes one scan request at a time,
+ * and the callbacks below write into a single shared context.
+ *
+ * That context and its completion semaphore are deliberately static rather
+ * than stack-allocated in uplink_halow_scan(). A scan that times out leaves
+ * the driver still holding the `cb_arg` pointer we handed it, and a late
+ * callback writing through a pointer to a returned stack frame - or to a
+ * semaphore we deleted - is a use-after-free. Keeping the storage alive for
+ * the life of the process makes a late callback harmless, and the generation
+ * counter makes it a no-op rather than a result misattributed to whatever scan
+ * is running by then. */
+static SemaphoreHandle_t s_scan_lock = NULL;
+static SemaphoreHandle_t s_scan_done = NULL;
+
+static struct scan_ctx {
+    uplink_scan_cb_t cb;
+    void *ctx;
+    uint32_t count;
+    uint32_t generation;
+} s_scan;
 
 /* HaLow (802.11ah) has no WPA2-PSK - confirmed against mmwlan.h's
  * enum mmwlan_security_type (MMWLAN_OPEN / MMWLAN_OWE / MMWLAN_SAE only). */
@@ -61,15 +85,18 @@ static void mm_sta_state_cb(enum mmwlan_sta_state sta_state)
     switch (sta_state) {
     case MMWLAN_STA_CONNECTED:
         s_associated = true;
+        s_associating = false;
         if (s_connect_sem != NULL) {
             xSemaphoreGive(s_connect_sem);
         }
         break;
     case MMWLAN_STA_CONNECTING:
+        s_associating = true;
         break;
     case MMWLAN_STA_DISABLED:
     default:
         s_associated = false;
+        s_associating = false;
         /* Signal the waiter here too. A connect attempt that fails fast
          * should retry after the backoff, not sit out the full
          * HALOW_CONNECT_TIMEOUT_MS first; halow_sta_connect() distinguishes
@@ -238,7 +265,8 @@ static void reconnect_task(void *arg)
         }
 
         backoff_ms = RECONNECT_BACKOFF_MIN_MS;
-        ESP_LOGI(TAG, "HaLow STA associated, waiting for DHCP lease...");
+        ESP_LOGI(TAG, "HaLow STA associated (RSSI %" PRId32 " dBm), waiting for DHCP lease...",
+                 uplink_halow_get_rssi());
 
         /* Association alone isn't usable - NAT and the CoT relay both need a
          * real address (see ip_event_handler's comment). Bound the wait so a
@@ -264,12 +292,18 @@ static void reconnect_task(void *arg)
         }
 
         if (!leased && halow_sta_link_up()) {
-            /* Still associated but unusable. Fall through to re-associate:
-             * the loop's next halow_sta_connect() is the only recovery lever
-             * available without a disconnect API we've verified against the
-             * real component headers (see design/TECHNICAL_REVIEW.md). */
-            ESP_LOGW(TAG, "no DHCP lease on this association, re-associating");
+            /* Still associated but unusable. Drop the association properly
+             * before retrying: mmhalow_disconnect() (-> mmwlan_sta_disable())
+             * is a real API in the component's public header, so the earlier
+             * approach of re-calling mmhalow_connect() on top of a live
+             * association is no longer necessary. */
+            ESP_LOGW(TAG, "no DHCP lease on this association, disconnecting and re-associating");
             set_has_ip(false);
+            esp_err_t dis_err = mmhalow_disconnect();
+            if (dis_err != ESP_OK) {
+                ESP_LOGW(TAG, "mmhalow_disconnect failed: %s", esp_err_to_name(dis_err));
+            }
+            s_associated = false;
             continue;
         }
 
@@ -286,11 +320,37 @@ static void reconnect_task(void *arg)
 esp_err_t uplink_halow_init(const gw_uplink_config_t *cfg)
 {
     memcpy(&s_cfg, cfg, sizeof(s_cfg));
-    return halow_sta_bringup(&s_cfg, &s_netif);
+    esp_err_t err = halow_sta_bringup(&s_cfg, &s_netif);
+    s_ready = (err == ESP_OK);
+    if (s_ready) {
+        s_scan_lock = xSemaphoreCreateMutex();
+        s_scan_done = xSemaphoreCreateBinary();
+        if (s_scan_lock == NULL || s_scan_done == NULL) {
+            ESP_LOGW(TAG, "couldn't create scan primitives - scanning will be unavailable");
+        }
+        /* Logged unconditionally at bring-up: if this prints, host<->MM6108
+         * SPI works, which rules out the single most likely first-flash
+         * failure before any association attempt muddies the picture. */
+        uplink_halow_log_radio_info();
+    }
+    return err;
+}
+
+bool uplink_halow_is_ready(void)
+{
+    return s_ready;
 }
 
 esp_err_t uplink_halow_start(void)
 {
+    if (!s_ready) {
+        /* Without this the reconnect task would spin on mmhalow_connect()
+         * against an uninitialized radio forever, and its once-per-second
+         * error log would bury the single line from uplink_halow_init() that
+         * says what actually went wrong. */
+        ESP_LOGE(TAG, "not starting the reconnect task - the radio never initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_reconnect_task_handle != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -307,6 +367,157 @@ esp_netif_t *uplink_halow_get_netif(void)
 bool uplink_halow_is_connected(void)
 {
     return s_has_ip;
+}
+
+uplink_link_state_t uplink_halow_get_link_state(void)
+{
+    if (!s_ready) {
+        return UPLINK_LINK_RADIO_FAILED;
+    }
+    if (s_has_ip) {
+        return UPLINK_LINK_UP;
+    }
+    if (s_associated) {
+        return UPLINK_LINK_ASSOCIATED;
+    }
+    if (s_associating) {
+        return UPLINK_LINK_ASSOCIATING;
+    }
+    return UPLINK_LINK_DOWN;
+}
+
+const char *uplink_halow_link_state_name(uplink_link_state_t state)
+{
+    switch (state) {
+    case UPLINK_LINK_RADIO_FAILED:
+        return "radio failed";
+    case UPLINK_LINK_DOWN:
+        return "searching";
+    case UPLINK_LINK_ASSOCIATING:
+        return "associating";
+    case UPLINK_LINK_ASSOCIATED:
+        return "associated, no lease";
+    case UPLINK_LINK_UP:
+        return "up";
+    default:
+        return "unknown";
+    }
+}
+
+int32_t uplink_halow_get_rssi(void)
+{
+    /* mmwlan_get_rssi() documents INT32_MIN as its error return, which is also
+     * what we want to mean "not associated", so an unassociated radio and a
+     * failed read are reported identically and callers only need one check. */
+    if (!s_ready || !s_associated) {
+        return INT32_MIN;
+    }
+    return mmwlan_get_rssi();
+}
+
+void uplink_halow_log_radio_info(void)
+{
+    if (!s_ready) {
+        ESP_LOGW(TAG, "radio not initialized - no version info available");
+        return;
+    }
+    /* The component's own printer: BCF API/build version, board description,
+     * firmware and morselib versions, all via ESP_LOGI. */
+    mmhalow_print_version_info();
+}
+
+/* `arg` is the generation this callback was registered for, passed by value
+ * through the driver's void* so a late callback from a timed-out scan can be
+ * recognised and dropped instead of feeding results to the wrong caller. */
+static void scan_rx_cb(const struct mmwlan_scan_result *result, void *arg)
+{
+    struct scan_ctx *sc = &s_scan;
+    if (result == NULL || (uint32_t)(uintptr_t)arg != sc->generation) {
+        return;
+    }
+
+    uplink_scan_result_t out = { 0 };
+
+    /* result->ssid points into the driver's receive buffer and is not
+     * NUL-terminated; copy it out bounded by both lengths. */
+    size_t ssid_len = result->ssid_len;
+    if (ssid_len > sizeof(out.ssid) - 1) {
+        ssid_len = sizeof(out.ssid) - 1;
+    }
+    if (result->ssid != NULL && ssid_len > 0) {
+        memcpy(out.ssid, result->ssid, ssid_len);
+    }
+    out.ssid[ssid_len] = '\0';
+
+    if (result->bssid != NULL) {
+        memcpy(out.bssid, result->bssid, sizeof(out.bssid));
+    }
+    out.rssi = result->rssi;
+    out.freq_hz = result->channel_freq_hz;
+    out.bw_mhz = result->bw_mhz;
+
+    sc->count++;
+    if (sc->cb != NULL) {
+        sc->cb(&out, sc->ctx);
+    }
+}
+
+static void scan_complete_cb(enum mmwlan_scan_state state, void *arg)
+{
+    (void)state;
+    if ((uint32_t)(uintptr_t)arg != s_scan.generation) {
+        return; /* completion for a scan that already timed out */
+    }
+    if (s_scan_done != NULL) {
+        xSemaphoreGive(s_scan_done);
+    }
+}
+
+esp_err_t uplink_halow_scan(uplink_scan_cb_t cb, void *ctx, uint32_t timeout_ms)
+{
+    if (!s_ready || s_scan_lock == NULL || s_scan_done == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_scan_lock, 0) != pdTRUE) {
+        return ESP_ERR_INVALID_STATE; /* another scan is already running */
+    }
+
+    s_scan.generation++;
+    s_scan.cb = cb;
+    s_scan.ctx = ctx;
+    s_scan.count = 0;
+    uint32_t generation = s_scan.generation;
+
+    /* Drain any completion left over from a previous scan that timed out, so
+     * this one doesn't return instantly on a stale signal. */
+    xSemaphoreTake(s_scan_done, 0);
+
+    struct mmhalow_scan_args args = {
+        .rx_cb = scan_rx_cb,
+        .complete_cb = scan_complete_cb,
+        .cb_arg = (void *)(uintptr_t)generation,
+    };
+
+    esp_err_t err = mmhalow_scan(&args);
+    if (err == ESP_OK) {
+        if (xSemaphoreTake(s_scan_done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+            /* Results received so far have already been delivered to cb; the
+             * scan just never reported completion within the budget. */
+            ESP_LOGW(TAG, "scan didn't complete within %u ms", (unsigned)timeout_ms);
+            err = ESP_ERR_TIMEOUT;
+        } else {
+            ESP_LOGI(TAG, "scan complete: %u AP(s) found", (unsigned)s_scan.count);
+        }
+    } else {
+        ESP_LOGW(TAG, "mmhalow_scan failed: %s", esp_err_to_name(err));
+    }
+
+    /* Bumping the generation before releasing the lock retires this scan's
+     * callbacks even if the driver delivers more of them later. */
+    s_scan.generation++;
+    s_scan.cb = NULL;
+    xSemaphoreGive(s_scan_lock);
+    return err;
 }
 
 void uplink_halow_set_state_callback(uplink_halow_state_cb_t cb, void *ctx)

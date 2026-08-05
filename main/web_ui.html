@@ -218,6 +218,37 @@
   button.secondary { background: transparent; color: var(--color-accent); }
   button:disabled { opacity: 0.5; cursor: progress; }
 
+  .logview {
+    margin: 12px 0 0;
+    padding: 10px;
+    max-height: 320px;
+    overflow: auto;
+    background: var(--color-bg);
+    border: 1px solid var(--color-line);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .logview:empty { display: none; }
+
+  .scan-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  .scan-table th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    border-bottom: 1px solid var(--color-line);
+    padding: 4px 8px 4px 0;
+  }
+  .scan-table td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--color-line); }
+  .scan-table tbody tr { cursor: pointer; }
+  .scan-table tbody tr:hover { background: var(--color-bg); }
+  .scan-table .num { font-family: var(--font-mono); white-space: nowrap; }
+
   /* Pinned so a save/error result is never below the fold on a phone - the
      previous version put this at the very bottom of a long form. */
   #status {
@@ -259,6 +290,10 @@
       <div class="stat-value"><span class="dot" id="dotUplink"></span><span id="stUplink">&mdash;</span></div>
     </div>
     <div>
+      <div class="stat-label">Signal</div>
+      <div class="stat-value" id="stRssi">&mdash;</div>
+    </div>
+    <div>
       <div class="stat-label">Uplink IP</div>
       <div class="stat-value" id="stUplinkIp">&mdash;</div>
     </div>
@@ -298,6 +333,14 @@
   <h2>HaLow uplink</h2>
   <fieldset>
     <p class="hint">Must match the mesh Pi's HaLow access point.</p>
+    <div class="actions">
+      <button type="button" class="secondary" id="scanBtn">Scan for HaLow APs</button>
+    </div>
+    <p class="hint" id="scanNote">
+      Scanning only covers channels legal in this firmware's region, and briefly
+      interrupts an established uplink. Click a result to fill in its SSID.
+    </p>
+    <div id="scanResults"></div>
     <label>SSID<input type="text" id="uplink_ssid" maxlength="32" autocomplete="off"></label>
     <label>Security
       <select id="uplink_security">
@@ -336,6 +379,19 @@
   <p class="hint">Saved changes apply on the next reboot.</p>
 </form>
 
+<h2>Device log</h2>
+<div class="panel">
+  <p class="hint">
+    The most recent log output, held in RAM. This is what the serial console would
+    have shown &mdash; useful when the node is somewhere a cable isn't.
+  </p>
+  <div class="actions">
+    <button type="button" class="secondary" id="logBtn">Load log</button>
+    <button type="button" class="secondary" id="logAutoBtn">Auto-refresh: off</button>
+  </div>
+  <pre id="logView" class="logview" aria-live="polite"></pre>
+</div>
+
 <div id="status" role="status" aria-live="polite"></div>
 
 <script>
@@ -368,7 +424,15 @@ function setDot(id, up) {
   el(id).className = 'dot ' + (up ? 'up' : 'down');
 }
 
+// esp_http_server handles requests on a single task, so a scan (which blocks
+// for several seconds) stalls every other request behind it. Without this
+// guard the status poll times out mid-scan and the panel flashes
+// "unreachable" — alarming, and wrong, at exactly the moment someone is
+// trying to diagnose a link.
+var scanning = false;
+
 async function loadStatus() {
+  if (scanning) return;
   try {
     var res = await fetch('/api/status', { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -376,10 +440,15 @@ async function loadStatus() {
 
     el('hdrNode').textContent = s.node_id || '';
 
-    var up = !!(s.uplink && s.uplink.connected);
+    var u = s.uplink || {};
+    var up = !!u.connected;
     setDot('dotUplink', up);
-    el('stUplink').textContent = up ? 'Connected' : 'Down';
-    el('stUplinkIp').textContent = (s.uplink && s.uplink.ip) || 'no lease';
+    // The firmware's own state name, not a boolean: "searching" vs
+    // "associated, no lease" are different problems with different fixes, and
+    // that distinction is the whole point of showing it here.
+    el('stUplink').textContent = u.state || (up ? 'Connected' : 'Down');
+    el('stRssi').textContent = (typeof u.rssi === 'number') ? (u.rssi + ' dBm') : '—';
+    el('stUplinkIp').textContent = u.ip || 'no lease';
     el('stApIp').textContent = (s.softap && s.softap.ip) || '—';
 
     var c = s.softap ? s.softap.clients : -1;
@@ -477,6 +546,126 @@ el('rebootBtn').addEventListener('click', async function () {
   setTimeout(function () {
     statusTimer = setInterval(loadStatus, 2000);
   }, 3000);
+});
+
+// --- HaLow scan -------------------------------------------------------------
+// Answers "is the Pi's AP visible at all?" from the device itself. Results are
+// clickable so a correct SSID can be adopted without retyping it - which also
+// removes a whole class of "it's a typo" bring-up dead ends.
+el('scanBtn').addEventListener('click', async function () {
+  var btn = el('scanBtn');
+  var out = el('scanResults');
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  out.innerHTML = '';
+  scanning = true;
+  try {
+    var res = await fetch('/api/scan', { method: 'POST' });
+    if (!res.ok) {
+      var text = await res.text().catch(function () { return ''; });
+      throw new Error(text ? text.replace(/<[^>]*>/g, '').trim() : 'HTTP ' + res.status);
+    }
+    var data = await res.json();
+    var aps = data.aps || [];
+    if (!aps.length) {
+      out.innerHTML = '';
+      var p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = 'No APs found in region ' + (data.country || '??') +
+        '. If the Pi runs a different regulatory domain, its channels were not scanned — ' +
+        'reflash with the matching region build before concluding the AP is down.';
+      out.appendChild(p);
+      return;
+    }
+    // Strongest first: the one you want is almost always the loudest.
+    aps.sort(function (a, b) { return (b.rssi || -999) - (a.rssi || -999); });
+
+    var table = document.createElement('table');
+    table.className = 'scan-table';
+    var thead = document.createElement('thead');
+    var hrow = document.createElement('tr');
+    ['SSID', 'BSSID', 'RSSI', 'Freq', 'BW'].forEach(function (h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      hrow.appendChild(th);
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    aps.forEach(function (ap) {
+      var tr = document.createElement('tr');
+      tr.title = 'Use this SSID';
+      // textContent throughout: SSIDs are attacker-controllable strings from
+      // the air, and must never reach innerHTML.
+      var cells = [
+        [ap.ssid || '(hidden)', ''],
+        [ap.bssid || '', 'num'],
+        [(ap.rssi != null ? ap.rssi + ' dBm' : '—'), 'num'],
+        [(ap.freq_khz != null ? (ap.freq_khz / 1000).toFixed(1) + ' MHz' : '—'), 'num'],
+        [(ap.bw_mhz != null ? ap.bw_mhz + ' MHz' : '—'), 'num']
+      ];
+      cells.forEach(function (c) {
+        var td = document.createElement('td');
+        td.textContent = c[0];
+        if (c[1]) td.className = c[1];
+        tr.appendChild(td);
+      });
+      tr.addEventListener('click', function () {
+        if (!ap.ssid) return;
+        el('uplink_ssid').value = ap.ssid;
+        showStatus('SSID set to "' + ap.ssid + '" — set security and save.', true);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    out.appendChild(table);
+
+    if (data.complete === false) {
+      var warn = document.createElement('p');
+      warn.className = 'hint';
+      warn.textContent = 'Scan timed out — these results may be incomplete.';
+      out.appendChild(warn);
+    }
+  } catch (e) {
+    showStatus('Scan failed: ' + e.message, false);
+  } finally {
+    scanning = false;
+    btn.disabled = false;
+    btn.textContent = 'Scan for HaLow APs';
+  }
+});
+
+// --- Device log -------------------------------------------------------------
+var logTimer = null;
+
+async function loadLog() {
+  try {
+    var res = await fetch('/api/log', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var view = el('logView');
+    // Only stick to the bottom if the reader was already there - otherwise
+    // auto-refresh would yank the view away mid-read.
+    var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
+    view.textContent = await res.text();
+    if (atBottom) view.scrollTop = view.scrollHeight;
+  } catch (e) {
+    showStatus('Could not load log: ' + e.message, false);
+  }
+}
+
+el('logBtn').addEventListener('click', loadLog);
+
+el('logAutoBtn').addEventListener('click', function () {
+  if (logTimer) {
+    clearInterval(logTimer);
+    logTimer = null;
+    el('logAutoBtn').textContent = 'Auto-refresh: off';
+  } else {
+    loadLog();
+    logTimer = setInterval(loadLog, 3000);
+    el('logAutoBtn').textContent = 'Auto-refresh: on';
+  }
 });
 
 loadConfig();

@@ -26,7 +26,7 @@ items below gets confirmed against a real node.
   integration that already publishes NMEA and CoT. CoT is a first-class
   citizen on this mesh already.
 - The Pi's HaLow radio (WM6108/WM1302) and the XIAO's HaLow module
-  (WM6180) are the same silicon, Morse Micro MM6108 — PHY/MAC/channel
+  (WM6108) are the same silicon, Morse Micro MM6108 — PHY/MAC/channel
   plan/regulatory config should line up directly between the two.
 - ESP32 HaLow cannot currently do STA-to-STA direct links (confirmed by
   Morse's own team) — the XIAO's HaLow radio must associate to a real

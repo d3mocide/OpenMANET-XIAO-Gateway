@@ -252,7 +252,7 @@
 
 <p class="lede">
   Flashes the <a href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway">OpenMANET-XIAO-Gateway</a>
-  firmware onto a Seeed XIAO ESP32-S3 + Wio-WM6180 (HaLow) node. Works in Chrome or Edge over USB —
+  firmware onto a Seeed XIAO ESP32-S3 + Seeed XIAO WM6108 (HaLow) node. Works in Chrome or Edge over USB —
   no software to install.
 </p>
 
@@ -302,19 +302,42 @@
       <a href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway/blob/main/main/provisioning.c">defaults</a>
       if these have changed).</span></li>
   <li><span>Connect your laptop or phone to that Wi-Fi network.</span></li>
-  <li><span>Browse to <code>http://192.168.50.1/</code> — the on-device config page.</span></li>
-  <li><span>Set the real HaLow uplink SSID/security/passphrase (open/OWE/SAE only — see the
+  <li><span>Browse to <code>http://172.16.50.1/</code> — the on-device config page.</span></li>
+  <li><span>Use the config page's <strong>Scan for HaLow APs</strong> button to find the mesh Pi's
+      access point, then click the result to fill in its SSID.</span></li>
+  <li><span>Set the uplink security/passphrase (open/OWE/SAE only — see the
       <a href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway/blob/main/design/pi_side_reference.md">Pi-side reference</a>
       for what the mesh Pi expects) and your own local Wi-Fi SSID/password, then Save and Reboot.</span></li>
 </ol>
+
+<h2>Reading the on-board LED</h2>
+<p>
+  The XIAO's user LED reports how far the node got, with no cable and no phone attached. Full
+  bring-up procedure is in the
+  <a href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway/blob/main/design/BRINGUP.md">bring-up runbook</a>.
+</p>
+<ul class="steps">
+  <li><span><strong>Fast triple-blink</strong> — the HaLow radio didn't initialize. Check the module is
+      seated and that you flashed a build matching your hardware.</span></li>
+  <li><span><strong>Slow blink</strong> — radio up, looking for the Pi's access point.</span></li>
+  <li><span><strong>Double-blink</strong> — associated, but the Pi hasn't given it an address yet.</span></li>
+  <li><span><strong>Solid</strong> — uplink up.</span></li>
+</ul>
+<p>
+  Locked out of the config page? Hold the <strong>BOOT button for 5 seconds</strong> while the node is
+  running to restore the default settings — the LED starts blinking fast after about 1.5 seconds to
+  confirm, and releasing before 5 seconds cancels.
+</p>
 
 <h2>Regulatory / country code</h2>
 <p>
   Each region above ships its own build with the legal channel list baked in at compile time
   (<code>CONFIG_HALOW_COUNTRY_CODE</code>) — pick your region before flashing so the radio comes up
   on the right regulatory domain; it can't be changed afterward from this page or the on-device
-  config UI. Building from source instead? <code>sdkconfig.defaults</code> ships the placeholder
-  <code>"??"</code> — set a real ISO 3166-1 country code yourself before flashing.
+  config UI. It has to match the regulatory domain your mesh Pi's HaLow radio is running — a
+  mismatch is silent, and shows up as a scan that finds nothing rather than as an error.
+  Building from source instead? <code>sdkconfig.defaults</code> defaults to <code>"US"</code> as a
+  working fallback; set your own ISO 3166-1 country code before flashing.
 </p>
 
 <footer>Firmware built automatically from the repository's <code>main</code> branch.</footer>

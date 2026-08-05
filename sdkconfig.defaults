@@ -44,13 +44,20 @@ CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin"
 CONFIG_MM_CHIP_MM6108=y
 
 # HaLow needs a regulatory/country code to know its legal channel list
-# (DESIGN.md §6.5) - "??" (the component's own default) is a deliberately
-# invalid placeholder that will fail to bring up the radio. Set this to the
-# real deployment country's ISO 3166-1 alpha-2 code (e.g. "US", "AU") before
-# flashing to real hardware. This is a *build-time* setting - unlike
-# uplink SSID/security, it cannot be changed later via gwcfg-* at runtime,
-# because mmhalow_init() reads it directly from Kconfig.
-CONFIG_HALOW_COUNTRY_CODE="??"
+# (DESIGN.md §6.5). This is a *build-time* setting - unlike uplink
+# SSID/security it cannot be changed later via gwcfg-* at runtime, because
+# mmhalow_init() reads it directly from Kconfig.
+#
+# "US" is the default here rather than the component's invalid "??" placeholder
+# so that a from-source build produces a firmware that can actually bring the
+# radio up. It is a fallback, not a claim about any particular deployment: the
+# code has to match the regulatory domain the Pi's HaLow AP is running, and
+# that differs per operator.
+#
+# CI overrides this per region via country-configs/<CODE>.defaults, and the web
+# flasher's region picker is where a user selects theirs at flash time - so
+# this value only affects local from-source builds.
+CONFIG_HALOW_COUNTRY_CODE="US"
 
 # --- Partition table: the default single-app table only allows a 1MB app
 # partition, but this firmware (HaLow SDK + softAP + NAT + CoT relay +
