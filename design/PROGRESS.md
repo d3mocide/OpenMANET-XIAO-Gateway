@@ -123,6 +123,16 @@ Added after the initial build-verification pass, on request:
   **GitHub Pages needs a one-time manual enable** (repo Settings → Pages → Source: "GitHub
   Actions") before the deploy step will succeed; that's a web UI action, not something a
   commit can do.
+- **Per-region firmware builds**: the workflow now runs a build matrix over `country-configs/*.defaults`
+  (`US`, `CA`, `EU`, `GB`, `AU`, `NZ`, `JP`, `KR`, `IN`), baking a real `CONFIG_HALOW_COUNTRY_CODE`
+  into each region's binary instead of shipping the `"??"` placeholder - it's a build-time value
+  `gwcfg-*` can't set, so this can't be fixed at runtime. The flasher page picks which region's
+  manifest to install from. This list isn't arbitrary - it's exactly the 9 regulatory domains
+  `mmregdb.c` (in Morse Micro's `mm-iot-sdk`, upstream of `morsemicro/halow`) ships channel tables
+  for; confirmed by reading that source directly, since neither the ESP-IDF component's Kconfig
+  help text nor its docs enumerate the list. Other countries aren't buildable until Morse Micro
+  ships regdb data for them. **Doesn't resolve open item 3 below** - which of these 9 (if any)
+  actually matches the mesh Pi's own regulatory domain is still unconfirmed against real hardware.
 - Bumped flash to the confirmed real 8MB and the app partition to 3MB (from 2MB) to give the
   larger binary (HTTP server + cJSON + embedded HTML) comfortable headroom.
 
@@ -143,7 +153,7 @@ changes.
 | Provisioning (NVS + console) | `main/provisioning.c` | Implemented: `gwcfg-show` / `gwcfg-set-uplink` / `gwcfg-set-softap` / `gwcfg-set-node` / `gwcfg-save` / `gwcfg-reset` over the serial console (now on the right USB peripheral), NVS blob load/save, placeholder defaults. Not yet flashed/tested. |
 | Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML form, GET/POST `/api/config`, POST `/api/reboot`, same NVS config as the console. Not yet flashed/tested. |
 | App wiring | `main/app_main.c` | Brings up SoftAP + console + web UI immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP. Not yet flashed/tested. |
-| Web flasher + CI | `docs/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page + GitHub Actions build/deploy. **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
+| Web flasher + CI | `docs/`, `country-configs/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page with a region picker + per-region GitHub Actions build/deploy matrix (`US`/`CA`/`EU`/`GB`/`AU`/`NZ`/`JP`/`KR`/`IN` - all 9 regdb-defined domains). **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
 
 ## Build-order checklist (DESIGN.md §8)
 

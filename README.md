@@ -24,6 +24,16 @@ Web Serial - Chrome/Edge only) that flashes firmware built automatically by
 `main`. It only flashes firmware with placeholder config; see "Configuring a node" below for
 setting real values afterward - nothing is typed into the flasher page itself.
 
+The workflow builds one firmware binary per region (a build matrix over `country-configs/*.defaults`)
+with `CONFIG_HALOW_COUNTRY_CODE` baked in, since that's a build-time value the device can't be told
+at runtime. The flasher page has a region picker above the flash button - pick yours before
+flashing. Regions currently built: **US, CA, EU, GB, AU, NZ, JP, KR, IN** - exactly the 9 regulatory
+domains Morse Micro's `mmregdb` (upstream of `morsemicro/halow`) ships channel data for as of this
+writing. That list can't be freely extended to any country: a code with no upstream regdb entry
+won't have a real channel plan to build against. Adding a region once Morse Micro ships data for it
+is a new `country-configs/<CODE>.defaults` file (one line: `CONFIG_HALOW_COUNTRY_CODE="<CODE>"`)
+plus a matching matrix/dropdown entry.
+
 **One-time setup this repo still needs**: GitHub Pages must be enabled with source "GitHub
 Actions" (repo Settings → Pages) before the workflow's deploy step will succeed - it isn't
 something a push can turn on by itself.
@@ -39,9 +49,10 @@ IDF version floor, the real HaLow security enum, board pin/BCF/chip config, part
 - **Pi-side HaLow AP config** (SSID/security mode) is unconfirmed — see
   `design/pi_side_reference.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
   defaults (see `gwcfg-*` console commands below).
-- **`CONFIG_HALOW_COUNTRY_CODE`** in `sdkconfig.defaults` is still the placeholder `"??"` - must
-  be set to a real ISO 3166-1 country code before flashing, or the radio won't come up. This is a
-  build-time Kconfig value, not something `gwcfg-*` can set at runtime.
+- **`CONFIG_HALOW_COUNTRY_CODE`** in `sdkconfig.defaults` is still the placeholder `"??"` - only
+  matters if you're building from source yourself (see "Building" below); the web flasher's builds
+  already bake in a real country code per region. Either way it's a build-time Kconfig value, not
+  something `gwcfg-*` can set at runtime.
 - Nothing has been flashed or run on physical hardware - a compiling build isn't a working
   radio link. Association/DHCP/NAT/CoT-relay behavior on real Pi + XIAO hardware is still
   unverified (`design/DESIGN.md` §8 steps 0-5).
@@ -102,9 +113,12 @@ main/
 └── web_ui.html          embedded into the firmware image, not a separate filesystem
 partitions.csv           custom 3MB app partition (default 1MB is too small for this build)
 docs/
-└── index.html           ESP Web Tools browser flasher page (see .github/workflows/)
+└── index.html           ESP Web Tools browser flasher page, region picker + per-region manifest
+country-configs/
+└── {US,CA,EU,GB,AU,NZ,JP,KR,IN}.defaults
+                        per-region CONFIG_HALOW_COUNTRY_CODE override, layered onto sdkconfig.defaults
 .github/workflows/
-└── build-firmware.yml   builds firmware + deploys docs/ to GitHub Pages on push
+└── build-firmware.yml   builds one firmware per region + deploys docs/ to GitHub Pages on push
 design/
 ├── DESIGN.md            full design document
 ├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link
