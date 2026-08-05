@@ -111,7 +111,7 @@ main/
 ├── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
 ├── web_ui.c             on-device HTTP config UI, SoftAP clients only (same NVS config as gwcfg-*)
 └── web_ui.html          embedded into the firmware image, not a separate filesystem
-partitions.csv           custom 3MB app partition (default 1MB is too small) + 64K coredump
+partitions.csv           dual-OTA: 2x 3MB app slots + otadata + 64K coredump (app is at 0x20000)
 docs/
 └── index.html           ESP Web Tools browser flasher page, region picker + per-region manifest
 country-configs/

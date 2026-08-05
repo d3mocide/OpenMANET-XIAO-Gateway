@@ -1,16 +1,38 @@
 # ESP-IDF Partition Table
 #
-# Flash is a confirmed 8MB, so this layout uses well under half of it. The
-# unallocated tail is deliberate headroom for a future dual-OTA layout - see
-# design/TECHNICAL_REVIEW.md "Deferred: OTA". Changing the table on already-
-# deployed units requires a USB cable, so the decision is being made once the
-# binary size settles rather than guessed at now.
+# Dual-OTA layout on a confirmed 8MB flash. Two 3MB app slots keep exactly the
+# ceiling the previous single-`factory` layout had (the app measured ~1.64MB
+# when this was adopted, i.e. ~45% free per slot), so nothing was traded away
+# to gain OTA capability.
 #
-# Name,     Type, SubType,  Offset,  Size, Flags
-nvs,        data, nvs,      0x9000,  24K,
-phy_init,   data, phy,      0xf000,  4K,
-factory,    app,  factory,  0x10000, 3M,
+# Total allocated: 0x630000 (6.19MB) of 8MB, leaving ~1.81MB unallocated.
+#
+# There is deliberately no `factory` partition: at 3MB per slot a third app
+# copy would need 9MB and doesn't fit. This is a standard arrangement - with a
+# blank/invalid otadata the bootloader falls back to ota_0, which is where a
+# fresh cable/web flash writes the image. ESP-IDF's own reference tables keep a
+# factory slot only because they use 1MB apps.
+#
+# NOTE: the app now lives at 0x20000, NOT the 0x10000 a default single-app
+# layout uses, and otadata at 0x10000 must be flashed with the generated
+# `ota_data_initial.bin`. Both are reflected in the web flasher's manifest
+# (.github/workflows/build-firmware.yml). Changing offsets here without
+# updating that manifest produces images that flash "successfully" and then
+# don't boot.
+#
+# Adopting OTA *update delivery* is a separate, still-open piece of work - the
+# layout is in place first because retrofitting a partition table onto already
+# deployed units costs a USB cable per unit. See design/TECHNICAL_REVIEW.md
+# "Deferred: OTA" for what still has to land (notably authentication before any
+# firmware-upload endpoint exists) and why rollback is intentionally not
+# enabled yet.
+#
+# Name,     Type, SubType,  Offset,   Size, Flags
+nvs,        data, nvs,      0x9000,   24K,
+phy_init,   data, phy,      0xf000,   4K,
+otadata,    data, ota,      0x10000,  8K,
+ota_0,      app,  ota_0,    0x20000,  3M,
+ota_1,      app,  ota_1,    0x320000, 3M,
 # Panic handler writes a backtrace here instead of only to a console nobody
-# may be watching - this is the phase where crashes happen unattended, on
-# hardware, away from a terminal. Read back with `idf.py coredump-info`.
-coredump,   data, coredump,        , 64K,
+# may be watching. Read back with `idf.py coredump-info`.
+coredump,   data, coredump, 0x620000, 64K,

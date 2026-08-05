@@ -20,9 +20,14 @@ uplink and the on-device web config UI, compiles clean against the real componen
 
 **Re-verified after the technical-review fixes (2026-08-05):** clean build, **zero errors and zero
 warnings**, binary `0x1A4620` (1.64MB) with 45% free in the 3MB app partition on confirmed real
-8MB flash. Partition table generates correctly including the new 64K coredump partition at
-`0x310000`. Every ESP-IDF/lwIP API the fixes rely on was checked against the pinned v5.5.1 source
+8MB flash. Every ESP-IDF/lwIP API the fixes rely on was checked against the pinned v5.5.1 source
 in that same checkout rather than from memory.
+
+**Re-verified again after the dual-OTA partition switch (2026-08-05):** `idf.py fullclean` +
+clean rebuild, zero errors, zero warnings. Generated partition table matches `partitions.csv`
+exactly, `ota_data_initial.bin` is produced, and the build's own `flash_args` confirms
+`0x10000 ota_data_initial.bin` / `0x20000 xiao_halow_gateway.bin` - the offsets the web flasher
+manifest now encodes and asserts.
 
 **What that build pass does *not* mean:** nothing has been flashed to real hardware. A compiling
 build proves the code is internally consistent against the real APIs; it doesn't prove the HaLow
@@ -231,14 +236,24 @@ what changed in this pass - all fixes are in, none are hardware-validated:
 | Perf | Assessed; no meaningful pre-hardware gains (HaLow-over-SPI is the ceiling). Added a 64K coredump partition for bring-up observability instead | Done |
 | Open | **OTA deferred pending final binary size** - single 3MB factory slot means USB-only updates today | Decision pending |
 
-**OTA is the one item deliberately left open.** Current binary measures **1.64MB** (`0x1A4620`,
-real build, 45% free in the 3MB slot), so a dual-OTA layout at 3MB per slot - keeping today's
-ceiling exactly - fits within 8MB flash with room to spare *right now*. The open question is
-therefore not capacity but whether the feature set has stopped moving (self-beacon, any auth work
-still to land). `partitions.csv` leaves the flash tail unallocated so the switch stays possible.
-The cost of waiting: units deployed before the switch need a physical cable to move to an
-OTA-capable table - so if hardware is going out to people who can't easily return it, decide
-before it ships. Detail in [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) "Deferred: OTA".
+**OTA was split in two; the layout half is now done.** The binary measured **1.64MB**
+(`0x1A4620`, real build), so two 3MB slots fit within 8MB flash while keeping the previous app
+ceiling unchanged - capacity was never the constraint, so there was nothing to learn by waiting.
+The partition table is now dual-OTA (`ota_0`/`ota_1` + `otadata`, ~1.81MB still unallocated),
+adopted immediately because retrofitting a table onto deployed units costs a USB cable per unit.
+
+**The update mechanism is still deferred, deliberately.** An OTA endpoint means anyone who can
+reach the web UI can replace the firmware, and that UI still has no authentication - the SoftAP
+passphrase is the only boundary. **Auth lands before any firmware-upload path exists.** Rollback
+(`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`) is likewise off until the app calls
+`esp_ota_mark_app_valid_cancel_rollback()`, or it would revert every boot. Sequence and detail in
+[`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) "Deferred: OTA".
+
+⚠️ **Flash offsets changed.** The app is now at `0x20000` (was `0x10000`), and `otadata` at
+`0x10000` needs the generated `ota_data_initial.bin`. Anything that flashes this firmware - the
+web flasher manifest, any local scripts, any notes - must match, or the board flashes "successfully"
+and doesn't boot. CI now asserts its manifest offsets against the build's own `flash_args` and
+fails the job on disagreement.
 
 ## Known v1 limitations (intentional, not bugs)
 
@@ -261,9 +276,10 @@ before it ships. Detail in [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) "Deferre
   handlers refuse requests from outside the SoftAP subnet, so it is no longer mesh-wide. That is
   subnet-based *authorization*, not authentication - it does not defend against a device already
   associated to the SoftAP.
-- No OTA. Single 3MB `factory` partition means firmware updates need a USB cable. Deferred
-  deliberately pending final binary size - see the review table above and
-  [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) "Deferred: OTA".
+- No OTA *delivery* yet. The partition layout is OTA-capable (dual 3MB slots), but nothing
+  performs updates, so firmware changes still need a USB cable in practice. Blocked on web UI
+  authentication by choice, not by effort - see [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md)
+  "Deferred: OTA" for the ordered list of what has to land.
 - The DHCP-failure recovery path re-calls `mmhalow_connect()` rather than doing a true radio-level
   disconnect first - no `mmhalow_disconnect()` could be confirmed against the real component
   headers. Confirm during bring-up whether a cleaner API exists.
