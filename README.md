@@ -1,4 +1,4 @@
-# OpenMANET-S3-Client
+# OpenMANET-XIAO-Gateway
 
 Firmware for a XIAO ESP32-S3 + Wio-WM6180 (HaLow) node that acts as a mesh-connected access
 point for the [OpenMANET](https://github.com/d3mocide) project: phones/tablets/ATAK devices

@@ -8,7 +8,7 @@ findings before making changes. Update this file's checklist whenever you finish
 learn something that changes it.
 
 - **Branch:** `claude/technical-review-performance-mmq12j`
-- **PR:** https://github.com/d3mocide/OpenMANET-S3-Client/pull/1
+- **PR:** https://github.com/d3mocide/OpenMANET-XIAO-Gateway/pull/1
 - **Last updated:** 2026-08-05
 
 ## Status at a glance
@@ -53,7 +53,7 @@ cd esp-idf && git submodule update --init --recursive --depth 1
 ./install.sh esp32s3   # needs libusb-1.0-0 (apt) for openocd-esp32, else it
                         # silently aborts before finishing the Python venv setup
 source export.sh
-cd /path/to/OpenMANET-S3-Client
+cd /path/to/OpenMANET-XIAO-Gateway
 idf.py set-target esp32s3
 idf.py build
 ```
