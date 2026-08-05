@@ -139,8 +139,9 @@ not exclusive:
 
 - **Static/configured position** — a lat/lon in `gw_config_t`, set when the node is placed. Cheap,
   no hardware, genuinely useful for a node on a fixed mast.
-- **Real GPS** — a UART module on the free pins. Better for a mobile node, but new hardware, new
-  config, new failure mode.
+- **Real GPS** — a UART module (ATGM336H or similar) on D6/D7 (GPIO 43/44), with D5 (GPIO 6) left
+  for PPS. Confirmed to fit; see "What's left for expansion" in [`HARDWARE.md`](HARDWARE.md).
+  Better for a mobile node, but new hardware, new config, new failure mode.
 
 Either way the beacon should carry what only this node knows: uplink state, RSSI, client count,
 uptime, and battery once item 6 exists. That data is already behind `/api/status`.
