@@ -30,7 +30,6 @@ void provisioning_get_defaults(gw_config_t *cfg)
     strlcpy(cfg->uplink.ssid, "openmanet-halow", sizeof(cfg->uplink.ssid));
     cfg->uplink.psk[0] = '\0';
     cfg->uplink.security = GW_SECURITY_OPEN;
-    cfg->uplink.channel = 0;
 
     /* Local client-facing SoftAP (DESIGN.md §4.2), default subnet matches
      * the example in the design doc's network diagram. */
@@ -98,12 +97,11 @@ esp_err_t provisioning_save(const gw_config_t *cfg)
 
 static void print_config(const gw_config_t *cfg)
 {
-    static const char *security_names[] = { "open", "wpa2-psk", "wpa3-sae" };
+    static const char *security_names[] = { "open", "owe", "sae" };
 
     printf("node_id       : %s\n", cfg->node_id);
     printf("uplink.ssid   : %s\n", cfg->uplink.ssid);
     printf("uplink.security: %s\n", security_names[cfg->uplink.security]);
-    printf("uplink.channel: %u\n", cfg->uplink.channel);
     printf("softap.ssid   : %s\n", cfg->softap.ssid);
     printf("softap.channel: %u\n", cfg->softap.channel);
     printf("softap.subnet : %s\n",
@@ -132,13 +130,15 @@ static int cmd_gwcfg_set_node(int argc, char **argv)
     return 0;
 }
 
+/* HaLow (802.11ah) has no WPA2-PSK mode - only open/OWE/SAE, confirmed
+ * against the real morsemicro/halow SDK's enum mmwlan_security_type. */
 static gw_security_mode_t parse_security(const char *s)
 {
-    if (strcmp(s, "psk") == 0) {
-        return GW_SECURITY_WPA2_PSK;
+    if (strcmp(s, "owe") == 0) {
+        return GW_SECURITY_OWE;
     }
     if (strcmp(s, "sae") == 0) {
-        return GW_SECURITY_WPA3_SAE;
+        return GW_SECURITY_SAE;
     }
     return GW_SECURITY_OPEN;
 }
@@ -146,15 +146,12 @@ static gw_security_mode_t parse_security(const char *s)
 static int cmd_gwcfg_set_uplink(int argc, char **argv)
 {
     if (!s_cfg || argc < 4) {
-        printf("usage: gwcfg-set-uplink <ssid> <psk|-> <open|psk|sae> [channel]\n");
+        printf("usage: gwcfg-set-uplink <ssid> <psk|-> <open|owe|sae>\n");
         return 1;
     }
     strlcpy(s_cfg->uplink.ssid, argv[1], sizeof(s_cfg->uplink.ssid));
     strlcpy(s_cfg->uplink.psk, strcmp(argv[2], "-") == 0 ? "" : argv[2], sizeof(s_cfg->uplink.psk));
     s_cfg->uplink.security = parse_security(argv[3]);
-    if (argc >= 5) {
-        s_cfg->uplink.channel = (uint8_t)atoi(argv[4]);
-    }
     printf("uplink config updated in RAM; run 'gwcfg-save' then reboot to apply\n");
     return 0;
 }

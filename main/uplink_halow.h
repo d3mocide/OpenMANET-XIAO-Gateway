@@ -11,8 +11,10 @@
 extern "C" {
 #endif
 
-/* Called whenever the HaLow uplink transitions between associated+has-IP
- * and not. Invoked from the reconnect task's context, not an ISR. */
+/* Called whenever the HaLow uplink transitions between having a DHCP-leased
+ * IP and not (IP_EVENT_STA_GOT_IP/LOST_IP on this netif - deliberately not
+ * just 802.11 association, since NAT/CoT relay need a real IP to be useful).
+ * Invoked from the default esp_event loop task, not an ISR. */
 typedef void (*uplink_halow_state_cb_t)(bool connected, void *ctx);
 
 /* One-time radio/netif bring-up. Safe to call even if the HaLow component

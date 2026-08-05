@@ -6,9 +6,8 @@
 CONFIG_LWIP_IP_FORWARD=y
 CONFIG_LWIP_IPV4_NAPT=y
 
-# IGMP is required for the CoT multicast relay (239.2.3.1:6969, DESIGN.md §5.4)
-# to join/leave multicast groups on both netifs.
-CONFIG_LWIP_IGMP=y
+# (No CONFIG_LWIP_IGMP option exists in this IDF version - it's hardcoded on
+# unconditionally in lwipopts.h, confirmed by a real build; nothing to set.)
 
 # The CoT relay uses IP_PKTINFO/recvmsg() on a single dual-joined socket to
 # determine which netif each multicast datagram actually arrived on, so it
@@ -25,3 +24,30 @@ CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
 # controller, not an external UART bridge - CONFIG_ESP_CONSOLE_UART_DEFAULT
 # would leave both logs and the console silent over that same cable.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- morsemicro/halow: Seeed XIAO ESP32S3 + Seeed XIAO WM6108 pin/chip/BCF
+# config, copied from the component's own
+# managed_components/morsemicro__halow/configs/sdkconfig.defaults.seeed_xiao_esp32s3-seeed_xiao_mm6108
+# (verified against a real `idf.py build` - the component's CMake refuses to
+# build at all without these). If the actual board/HAT pairing differs,
+# regenerate from the matching file in that configs/ directory instead of
+# hand-editing pin numbers. ---
+CONFIG_MM_RESET_N=1
+CONFIG_MM_WAKE=2
+CONFIG_MM_BUSY=5
+CONFIG_MM_SPI_SCK=7
+CONFIG_MM_SPI_MOSI=9
+CONFIG_MM_SPI_MISO=8
+CONFIG_MM_SPI_CS=4
+CONFIG_MM_SPI_IRQ=3
+CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin"
+CONFIG_MM_CHIP_MM6108=y
+
+# HaLow needs a regulatory/country code to know its legal channel list
+# (DESIGN.md §6.5) - "??" (the component's own default) is a deliberately
+# invalid placeholder that will fail to bring up the radio. Set this to the
+# real deployment country's ISO 3166-1 alpha-2 code (e.g. "US", "AU") before
+# flashing to real hardware. This is a *build-time* setting - unlike
+# uplink SSID/security, it cannot be changed later via gwcfg-* at runtime,
+# because mmhalow_init() reads it directly from Kconfig.
+CONFIG_HALOW_COUNTRY_CODE="??"
