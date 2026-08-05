@@ -4,34 +4,240 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XIAO HaLow Gateway — Web Flasher</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='1.5' y='14' width='4' height='8.5' fill='%23c1662d'/%3E%3Crect x='10' y='8.5' width='4' height='14' fill='%23c1662d'/%3E%3Crect x='18.5' y='2.5' width='4' height='20' fill='%23c1662d'/%3E%3C/svg%3E">
 <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 34rem; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; line-height: 1.5; }
-  h1 { font-size: 1.4rem; }
-  esp-web-install-button { display: block; margin: 1.5rem 0; }
-  ol, ul { padding-left: 1.2rem; }
-  code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 4px; }
-  .note { background: #fff8e1; border: 1px solid #f0d878; border-radius: 6px; padding: 0.8rem 1rem; margin: 1rem 0; }
-  .unsupported { display: none; }
+  :root {
+    --color-bg: #f3f4f6;
+    --color-surface: #ffffff;
+    --color-ink: #171b21;
+    --color-muted: #5c6570;
+    --color-accent: #c1662d;
+    --color-on-accent: #1a1006;
+    --color-line: #dde1e6;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+    --font-body: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: #12151a;
+      --color-surface: #1a1f26;
+      --color-ink: #e8eaed;
+      --color-muted: #9aa3af;
+      --color-accent: #e0924f;
+      --color-line: #2a2f38;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    max-width: 38rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3.5rem) 1.25rem 4rem;
+  }
+
+  a { color: var(--color-accent); }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  header { margin-bottom: 2rem; }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    margin-bottom: 0.9rem;
+  }
+
+  .signal-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+  }
+  .signal-bars span {
+    display: block;
+    width: 3px;
+    background: var(--color-accent);
+  }
+  .signal-bars span:nth-child(1) { height: 40%; }
+  .signal-bars span:nth-child(2) { height: 70%; }
+  .signal-bars span:nth-child(3) { height: 100%; }
+
+  h1 {
+    font-family: var(--font-mono);
+    font-size: clamp(1.35rem, 4vw, 1.65rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 0.3rem;
+  }
+  h1 span {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--color-accent);
+    margin-top: 0.35rem;
+  }
+
+  h2 {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    border-top: 1px solid var(--color-line);
+    padding-top: 0.5rem;
+    margin: 2.25rem 0 1rem;
+  }
+
+  p { color: var(--color-ink); }
+  .lede { color: var(--color-muted); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+  }
+
+  /* HUD-style bracketed panel for the placeholder-config callout */
+  .panel {
+    position: relative;
+    background: var(--color-surface);
+    padding: 1.1rem 1.25rem;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+  }
+  .panel::before, .panel::after,
+  .panel > .corner::before, .panel > .corner::after {
+    content: "";
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--color-accent);
+  }
+  .panel::before { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+  .panel::after { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+  .panel > .corner::before { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+  .panel > .corner::after { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+
+  .panel strong { color: var(--color-accent); }
+
+  esp-web-install-button { display: block; margin: 1.75rem 0; }
+
+  .flash-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-on-accent);
+    background: var(--color-accent);
+    border: 1px solid var(--color-accent);
+    padding: 0.85rem 1.5rem;
+    cursor: pointer;
+    transition: filter 0.15s ease;
+  }
+  .flash-btn::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-on-accent);
+    opacity: 0.6;
+  }
+  .flash-btn:hover { filter: brightness(1.08); }
+  @media (prefers-reduced-motion: reduce) {
+    .flash-btn { transition: none; }
+  }
+
+  .unsupported {
+    display: none;
+    font-size: 0.9rem;
+    color: var(--color-muted);
+  }
+
+  ol.steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  ol.steps li {
+    display: grid;
+    grid-template-columns: 2.1rem 1fr;
+    gap: 0.75rem;
+    align-items: baseline;
+  }
+  ol.steps li::before {
+    counter-increment: step;
+    content: "[" counter(step) "]";
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-accent);
+  }
+  ol.steps li > span { display: block; }
+  ol.steps { counter-reset: step; }
+
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-line);
+    font-size: 0.8rem;
+    color: var(--color-muted);
+  }
 </style>
 </head>
 <body>
-<h1>XIAO HaLow Gateway — Web Flasher</h1>
-<p>
+
+<header>
+  <div class="eyebrow">
+    <span class="signal-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+    OpenMANET · Device Flasher
+  </div>
+  <h1>XIAO HaLow Gateway<span>Web Flasher</span></h1>
+</header>
+
+<p class="lede">
   Flashes the <a href="https://github.com/d3mocide/OpenMANET-S3-Client">OpenMANET-S3-Client</a>
-  firmware onto a Seeed XIAO ESP32-S3 + Wio-WM6180 (HaLow) node. Works in Chrome/Edge over USB -
+  firmware onto a Seeed XIAO ESP32-S3 + Wio-WM6180 (HaLow) node. Works in Chrome or Edge over USB —
   no software to install.
 </p>
 
-<div class="note">
-  This flashes firmware with <strong>placeholder configuration</strong> (open HaLow uplink,
-  default local Wi-Fi credentials). See "After flashing" below to set your real values - nothing
-  here bakes in your Wi-Fi/HaLow credentials, they're entered later over the device's own local
-  network, not typed into this page.
+<div class="panel">
+  <span class="corner" aria-hidden="true"></span>
+  This flashes firmware with <strong>placeholder configuration</strong> (open HaLow uplink, default
+  local Wi-Fi credentials). See "After flashing" below to set your real values — nothing here bakes
+  in your Wi-Fi/HaLow credentials, they're entered later over the device's own local network, not
+  typed into this page.
 </div>
 
 <esp-web-install-button manifest="./manifest.json">
-  <button slot="activate">Connect &amp; Flash</button>
+  <button slot="activate" class="flash-btn">Connect &amp; Flash</button>
   <span slot="unsupported" class="unsupported">
     Your browser doesn't support Web Serial. Use Chrome or Edge on desktop.
   </span>
@@ -41,31 +247,32 @@
 </esp-web-install-button>
 
 <h2>Before flashing</h2>
-<ol>
-  <li>Plug the XIAO ESP32-S3 in via USB-C.</li>
-  <li>Click "Connect &amp; Flash" above and pick the device's serial port when your browser asks.</li>
+<ol class="steps">
+  <li><span>Plug the XIAO ESP32-S3 in via USB-C.</span></li>
+  <li><span>Click "Connect &amp; Flash" above and pick the device's serial port when your browser asks.</span></li>
 </ol>
 
 <h2>After flashing</h2>
-<ol>
-  <li>The device boots and starts its own Wi-Fi access point (default SSID <code>xiao-gateway</code>,
-      password <code>openmanet</code> - see the firmware's
+<ol class="steps">
+  <li><span>The device boots and starts its own Wi-Fi access point (default SSID <code>xiao-gateway</code>,
+      password <code>openmanet</code> — see the firmware's
       <a href="https://github.com/d3mocide/OpenMANET-S3-Client/blob/main/main/provisioning.c">defaults</a>
-      if these have changed).</li>
-  <li>Connect your laptop or phone to that Wi-Fi network.</li>
-  <li>Browse to <code>http://192.168.50.1/</code> - the on-device config page.</li>
-  <li>Set the real HaLow uplink SSID/security/passphrase (open/OWE/SAE only - see the
+      if these have changed).</span></li>
+  <li><span>Connect your laptop or phone to that Wi-Fi network.</span></li>
+  <li><span>Browse to <code>http://192.168.50.1/</code> — the on-device config page.</span></li>
+  <li><span>Set the real HaLow uplink SSID/security/passphrase (open/OWE/SAE only — see the
       <a href="https://github.com/d3mocide/OpenMANET-S3-Client/blob/main/design/pi_side_reference.md">Pi-side reference</a>
-      for what the mesh Pi expects) and your own local Wi-Fi SSID/password, then Save and Reboot.</li>
+      for what the mesh Pi expects) and your own local Wi-Fi SSID/password, then Save and Reboot.</span></li>
 </ol>
 
-<h2>Regulatory/country code</h2>
+<h2>Regulatory / country code</h2>
 <p>
   The HaLow radio's legal channel list is set at build time, not from this page or the on-device
   config UI. If the firmware served here doesn't already have your country configured, it won't
-  associate - see <code>sdkconfig.defaults</code>'s <code>CONFIG_HALOW_COUNTRY_CODE</code> in the repo.
+  associate — see <code>sdkconfig.defaults</code>'s <code>CONFIG_HALOW_COUNTRY_CODE</code> in the repo.
 </p>
 
-<p><small>Firmware built automatically from the repository's <code>main</code> branch.</small></p>
+<footer>Firmware built automatically from the repository's <code>main</code> branch.</footer>
+
 </body>
 </html>
