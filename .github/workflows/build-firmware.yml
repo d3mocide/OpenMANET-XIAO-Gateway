@@ -23,7 +23,7 @@ jobs:
 
       # Builds inside the official espressif/idf Docker image for the pinned
       # version - avoids the local-toolchain gotchas found setting this up by
-      # hand (see docs/PROGRESS.md): missing libusb for openocd, the Python
+      # hand (see design/PROGRESS.md): missing libusb for openocd, the Python
       # venv step silently not completing, etc.
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
@@ -37,7 +37,7 @@ jobs:
         run: |
           set -eu
           mkdir -p site
-          cp web-flasher/index.html site/
+          cp docs/index.html site/
           cp build/bootloader/bootloader.bin site/
           cp build/partition_table/partition-table.bin site/
           cp build/xiao_halow_gateway.bin site/

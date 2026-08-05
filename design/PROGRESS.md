@@ -111,14 +111,14 @@ Added after the initial build-verification pass, on request:
   identical logic, not a parallel config system. Passwords are never echoed back in `GET
   /api/config` responses; a blank password field on save means "keep current," not "clear it."
   Compiles clean (verified the same way as everything else - see above).
-- **`web-flasher/`**: a static [ESP Web Tools](https://esphome.github.io/esp-web-tools/) page
+- **`docs/`**: a static [ESP Web Tools](https://esphome.github.io/esp-web-tools/) page
   (Web Serial, Chrome/Edge only) that flashes the firmware with placeholder config - it does not
   bake in Wi-Fi/HaLow credentials from the browser. Real config happens after flashing via the
   web UI above.
 - **`.github/workflows/build-firmware.yml`**: builds firmware in the official `espressif/idf`
   Docker image (via `espressif/esp-idf-ci-action`, sidesteps the local-toolchain gotchas found
   above entirely) on every push to `main`, generates `manifest.json`, and deploys
-  `web-flasher/` + the built binaries to GitHub Pages.
+  `docs/` + the built binaries to GitHub Pages.
   **Not yet exercised for real** - no push to `main` has triggered it yet in this environment, and
   **GitHub Pages needs a one-time manual enable** (repo Settings → Pages → Source: "GitHub
   Actions") before the deploy step will succeed; that's a web UI action, not something a
@@ -143,7 +143,7 @@ changes.
 | Provisioning (NVS + console) | `main/provisioning.c` | Implemented: `gwcfg-show` / `gwcfg-set-uplink` / `gwcfg-set-softap` / `gwcfg-set-node` / `gwcfg-save` / `gwcfg-reset` over the serial console (now on the right USB peripheral), NVS blob load/save, placeholder defaults. Not yet flashed/tested. |
 | Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML form, GET/POST `/api/config`, POST `/api/reboot`, same NVS config as the console. Not yet flashed/tested. |
 | App wiring | `main/app_main.c` | Brings up SoftAP + console + web UI immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP. Not yet flashed/tested. |
-| Web flasher + CI | `web-flasher/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page + GitHub Actions build/deploy. **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
+| Web flasher + CI | `docs/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page + GitHub Actions build/deploy. **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
 
 ## Build-order checklist (DESIGN.md §8)
 
