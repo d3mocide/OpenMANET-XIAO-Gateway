@@ -4,13 +4,18 @@
 
 #include "web_ui.h"
 
+#include "cot_relay.h"
 #include "provisioning.h"
+#include "uplink_halow.h"
 
 #include "cJSON.h"
+#include "esp_app_desc.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_wifi.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 
@@ -144,6 +149,90 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(cot, "group", s_cfg->cot.group);
     cJSON_AddNumberToObject(cot, "port", s_cfg->cot.port);
     provisioning_config_unlock();
+
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (out == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, out);
+    free(out);
+    return err;
+}
+
+/* Adds "<name>": "a.b.c.d" for a netif's current address, or null if the
+ * interface has no address yet (normal for the uplink before DHCP). */
+static void add_netif_ip(cJSON *parent, const char *name, esp_netif_t *netif)
+{
+    esp_netif_ip_info_t ip_info;
+    if (netif == NULL || esp_netif_get_ip_info(netif, &ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        cJSON_AddNullToObject(parent, name);
+        return;
+    }
+    char buf[16];
+    snprintf(buf, sizeof(buf), IPSTR, IP2STR(&ip_info.ip));
+    cJSON_AddStringToObject(parent, name, buf);
+}
+
+/* Live device state, polled by the page. This is the bring-up diagnostic
+ * surface: without it, "is the uplink actually up, and did the relay start?"
+ * is only answerable over the serial console, which is exactly the thing you
+ * don't have when the device is deployed somewhere awkward. Read-only - it
+ * exposes no secrets (no passphrases), but is still gated to SoftAP clients
+ * like every other handler. */
+static esp_err_t status_get_handler(httpd_req_t *req)
+{
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    provisioning_config_lock();
+    cJSON_AddStringToObject(root, "node_id", s_cfg->node_id);
+    cJSON *cot = cJSON_AddObjectToObject(root, "cot");
+    cJSON_AddStringToObject(cot, "group", s_cfg->cot.group);
+    cJSON_AddNumberToObject(cot, "port", s_cfg->cot.port);
+    provisioning_config_unlock();
+
+    cJSON_AddBoolToObject(cot, "running", cot_relay_is_running());
+
+    cJSON *uplink = cJSON_AddObjectToObject(root, "uplink");
+    /* "connected" tracks the DHCP lease, not raw 802.11 association - the
+     * same distinction ip_event_handler() draws, and the one that actually
+     * determines whether NAT and the relay could start. */
+    cJSON_AddBoolToObject(uplink, "connected", uplink_halow_is_connected());
+    add_netif_ip(uplink, "ip", uplink_halow_get_netif());
+
+    cJSON *softap = cJSON_AddObjectToObject(root, "softap");
+    add_netif_ip(softap, "ip", s_softap_netif);
+    wifi_sta_list_t sta_list;
+    cJSON_AddNumberToObject(softap, "clients",
+                            esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK ? sta_list.num : -1);
+
+    cJSON *sys = cJSON_AddObjectToObject(root, "system");
+    cJSON_AddNumberToObject(sys, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddNumberToObject(sys, "heap_free", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(sys, "heap_min", esp_get_minimum_free_heap_size());
+    /* Build-time regulatory domain. Worth surfacing because it cannot be
+     * changed at runtime and a mismatch with the mesh Pi is the failure that
+     * blocks association outright (design/pi_side_reference.md item 3). */
+    cJSON_AddStringToObject(sys, "country", CONFIG_HALOW_COUNTRY_CODE);
+
+    const esp_app_desc_t *desc = esp_app_get_description();
+    cJSON_AddStringToObject(sys, "version", desc ? desc->version : "unknown");
+
+    /* Which OTA slot is running - meaningless today (always ota_0) but the
+     * first thing you want to see once OTA updates exist. */
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    cJSON_AddStringToObject(sys, "partition", running ? running->label : "unknown");
 
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -346,6 +435,7 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
 
     const httpd_uri_t routes[] = {
         { .uri = "/", .method = HTTP_GET, .handler = root_get_handler },
+        { .uri = "/api/status", .method = HTTP_GET, .handler = status_get_handler },
         { .uri = "/api/config", .method = HTTP_GET, .handler = config_get_handler },
         { .uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler },

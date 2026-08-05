@@ -17,6 +17,8 @@ idf_component_register(
         lwip
         esp_http_server
         esp_timer
+        esp_app_format
+        app_update
         json
     EMBED_FILES "web_ui.html"
 )

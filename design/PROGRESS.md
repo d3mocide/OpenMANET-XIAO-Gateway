@@ -169,7 +169,7 @@ changes.
 | NAPT (uplink NAT) | `main/ip_forward_nat.c` | Implemented via `esp_netif_napt_enable()`, called once the uplink gets an IP. Not yet flashed/tested. |
 | CoT multicast relay | `main/cot_relay.c` | Implemented: single socket joined to 239.2.3.1:6969 on both netifs, uses `IP_PKTINFO`/`recvmsg()` to identify arrival interface and avoid a forwarding loop. Not yet flashed/tested. |
 | Provisioning (NVS + console) | `main/provisioning.c` | Implemented: `gwcfg-show` / `gwcfg-set-uplink` / `gwcfg-set-softap` / `gwcfg-set-node` / `gwcfg-save` / `gwcfg-reset` over the serial console (now on the right USB peripheral), NVS blob load/save, placeholder defaults. Not yet flashed/tested. |
-| Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML form, GET/POST `/api/config`, POST `/api/reboot`, same NVS config as the console. Not yet flashed/tested. |
+| Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML, GET `/api/status`, GET/POST `/api/config`, POST `/api/reboot`, same NVS config as the console. SoftAP clients only; no authentication yet. Restyled to share the web flasher's design system (dark mode included). Not yet flashed/tested. |
 | App wiring | `main/app_main.c` | Brings up SoftAP + console + web UI immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP. Not yet flashed/tested. |
 | Web flasher + CI | `docs/`, `country-configs/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page with a region picker + per-region GitHub Actions build/deploy matrix (`US`/`CA`/`EU`/`GB`/`AU`/`NZ`/`JP`/`KR`/`IN` - all 9 regdb-defined domains). **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
 
@@ -200,6 +200,14 @@ changes.
       (`main/web_ui.c`, connect to the SoftAP and browse to its IP) both exist now, compile clean,
       neither flashed/tested on hardware yet. No captive-portal DNS redirect (visiting *any* URL
       auto-opens the config page) - user has to know to browse to the device's IP.
+      **The web UI's status panel is the intended bring-up instrument for steps 1-5**: it reports
+      uplink up/down, the DHCP-leased uplink IP, SoftAP client count, whether the CoT relay
+      actually started, uptime, free heap, and the baked-in country code - i.e. most of what these
+      steps are trying to establish, without needing a serial cable attached.
+- [ ] **Step 7** - Web UI authentication. Blocks shipping and blocks OTA update delivery. Design
+      is settled (forced password change on first use, challenge-response so the password never
+      crosses the wire, serial-console recovery) - see `TECHNICAL_REVIEW.md` "Deferred: web UI
+      authentication". Not started.
 
 ## Open questions
 

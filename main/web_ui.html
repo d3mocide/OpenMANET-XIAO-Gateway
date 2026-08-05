@@ -4,33 +4,301 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XIAO HaLow Gateway</title>
+<!-- Design language is shared deliberately with docs/index.html (the web
+     flasher): same custom properties, same mono/body pairing, same HUD
+     bracket panels. Flashing and configuring should read as one product.
+     Everything is inline - this page is embedded in the firmware image and
+     served from a device with no internet access, so an external font or
+     stylesheet would simply never load. -->
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 32rem; margin: 1.5rem auto; padding: 0 1rem; color: #1a1a1a; }
-  h1 { font-size: 1.25rem; }
-  fieldset { margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 6px; }
-  legend { font-weight: 600; padding: 0 0.4rem; }
-  label { display: block; margin-top: 0.6rem; font-size: 0.9rem; }
-  input, select { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.2rem; font-size: 1rem; }
-  button { margin-top: 1rem; padding: 0.6rem 1.2rem; font-size: 1rem; cursor: pointer; }
-  #status { margin-top: 1rem; padding: 0.6rem; border-radius: 6px; display: none; }
-  #status.ok { display: block; background: #e6f4ea; color: #1e7e34; }
-  #status.err { display: block; background: #fdecea; color: #a12622; }
-  .hint { color: #666; font-size: 0.8rem; margin-top: 0.2rem; }
+  :root {
+    --color-bg: #f3f4f6;
+    --color-surface: #ffffff;
+    --color-ink: #171b21;
+    --color-muted: #5c6570;
+    --color-accent: #c1662d;
+    --color-line: #dde1e6;
+    --color-ok: #1e7e34;
+    --color-warn: #a12622;
+    --color-field: #ffffff;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
+    --font-body: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-bg: #12151a;
+      --color-surface: #1a1f26;
+      --color-ink: #e8eaed;
+      --color-muted: #9aa3af;
+      --color-accent: #e0924f;
+      --color-line: #2a2f38;
+      --color-ok: #5cc27a;
+      --color-warn: #f08a80;
+      --color-field: #12161c;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    max-width: 38rem;
+    margin: 0 auto;
+    padding: clamp(1.25rem, 4vw, 3rem) 1.25rem 4rem;
+  }
+
+  button:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  header { margin-bottom: 1.75rem; }
+
+  .eyebrow {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    margin-bottom: 0.9rem;
+  }
+
+  .signal-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+  .signal-bars span { display: block; width: 3px; background: var(--color-accent); }
+  .signal-bars span:nth-child(1) { height: 40%; }
+  .signal-bars span:nth-child(2) { height: 70%; }
+  .signal-bars span:nth-child(3) { height: 100%; }
+
+  h1 {
+    font-family: var(--font-mono);
+    font-size: clamp(1.35rem, 4vw, 1.65rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+  h1 span {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--color-accent);
+    margin-top: 0.35rem;
+  }
+
+  h2 {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    border-top: 1px solid var(--color-line);
+    padding-top: 0.5rem;
+    margin: 2.25rem 0 1rem;
+  }
+
+  /* HUD-style bracketed panel, matching the flasher's callout treatment. */
+  .panel {
+    position: relative;
+    background: var(--color-surface);
+    padding: 1rem 1.15rem;
+    margin: 1.25rem 0;
+  }
+  .panel::before, .panel::after {
+    content: "";
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--color-accent);
+  }
+  .panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .panel::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  /* --- Status --- */
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 0.85rem 1.25rem;
+  }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    /* Values change on every poll; without this the columns jitter. */
+    font-variant-numeric: tabular-nums;
+    word-break: break-all;
+  }
+
+  .dot {
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    margin-right: 0.4rem;
+    background: var(--color-muted);
+    vertical-align: baseline;
+  }
+  .dot.up { background: var(--color-ok); }
+  .dot.down { background: var(--color-warn); }
+
+  /* --- Form --- */
+  fieldset { border: 0; padding: 0; margin: 0; }
+  legend { padding: 0; }
+
+  label {
+    display: block;
+    margin-top: 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  input, select {
+    width: 100%;
+    margin-top: 0.3rem;
+    padding: 0.55rem 0.65rem;
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    color: var(--color-ink);
+    background: var(--color-field);
+    border: 1px solid var(--color-line);
+    border-radius: 2px;
+  }
+  input::placeholder { color: var(--color-muted); opacity: 0.8; }
+
+  .hint {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--color-muted);
+    margin: 0.35rem 0 0;
+    /* Labels are uppercase mono; hints are deliberately not. */
+    text-transform: none;
+    letter-spacing: normal;
+    font-family: var(--font-body);
+    font-weight: 400;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.75rem;
+  }
+
+  button {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.7rem 1.3rem;
+    border-radius: 2px;
+    cursor: pointer;
+    border: 1px solid var(--color-accent);
+  }
+  button[type="submit"] { background: var(--color-accent); color: #1a1006; }
+  button.secondary { background: transparent; color: var(--color-accent); }
+  button:disabled { opacity: 0.5; cursor: progress; }
+
+  /* Pinned so a save/error result is never below the fold on a phone - the
+     previous version put this at the very bottom of a long form. */
+  #status {
+    position: fixed;
+    left: 50%;
+    bottom: 1rem;
+    transform: translateX(-50%);
+    width: calc(100% - 2.5rem);
+    max-width: 35.5rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 2px;
+    font-size: 0.9rem;
+    display: none;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  }
+  #status.ok { display: block; background: var(--color-ok); color: #fff; }
+  #status.err { display: block; background: var(--color-warn); color: #fff; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .dot { transition: background-color 0.3s ease; }
+  }
 </style>
 </head>
 <body>
-<h1>XIAO HaLow Gateway</h1>
-<p class="hint">Changes are saved on submit but only take effect after a reboot.</p>
+
+<header>
+  <div class="eyebrow">
+    <span class="signal-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+    OpenMANET &middot; Gateway Config
+  </div>
+  <h1>XIAO HaLow Gateway<span id="hdrNode">&nbsp;</span></h1>
+</header>
+
+<h2>Status</h2>
+<div class="panel">
+  <div class="status-grid">
+    <div>
+      <div class="stat-label">HaLow uplink</div>
+      <div class="stat-value"><span class="dot" id="dotUplink"></span><span id="stUplink">&mdash;</span></div>
+    </div>
+    <div>
+      <div class="stat-label">Uplink IP</div>
+      <div class="stat-value" id="stUplinkIp">&mdash;</div>
+    </div>
+    <div>
+      <div class="stat-label">Local Wi-Fi IP</div>
+      <div class="stat-value" id="stApIp">&mdash;</div>
+    </div>
+    <div>
+      <div class="stat-label">Clients</div>
+      <div class="stat-value" id="stClients">&mdash;</div>
+    </div>
+    <div>
+      <div class="stat-label">CoT relay</div>
+      <div class="stat-value"><span class="dot" id="dotCot"></span><span id="stCot">&mdash;</span></div>
+    </div>
+    <div>
+      <div class="stat-label">Uptime</div>
+      <div class="stat-value" id="stUptime">&mdash;</div>
+    </div>
+    <div>
+      <div class="stat-label">Free heap</div>
+      <div class="stat-value" id="stHeap">&mdash;</div>
+    </div>
+    <div>
+      <div class="stat-label">Region / slot</div>
+      <div class="stat-value" id="stRegion">&mdash;</div>
+    </div>
+  </div>
+</div>
 
 <form id="cfgForm">
+  <h2>Node</h2>
   <fieldset>
-    <legend>Node</legend>
-    <label>Node ID<input type="text" id="node_id" maxlength="32"></label>
+    <label>Node ID<input type="text" id="node_id" maxlength="32" autocomplete="off"></label>
   </fieldset>
 
+  <h2>HaLow uplink</h2>
   <fieldset>
-    <legend>HaLow uplink (to the mesh Pi)</legend>
-    <label>SSID<input type="text" id="uplink_ssid" maxlength="32"></label>
+    <p class="hint">Must match the mesh Pi's HaLow access point.</p>
+    <label>SSID<input type="text" id="uplink_ssid" maxlength="32" autocomplete="off"></label>
     <label>Security
       <select id="uplink_security">
         <option value="open">Open</option>
@@ -38,106 +306,182 @@
         <option value="sae">SAE (WPA3)</option>
       </select>
     </label>
-    <label>Passphrase (SAE only)
-      <input type="password" id="uplink_psk" maxlength="64" placeholder="leave blank to keep current">
+    <label>Passphrase
+      <input type="password" id="uplink_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
     </label>
+    <p class="hint">Used only when security is SAE. HaLow has no WPA2-PSK mode.</p>
   </fieldset>
 
+  <h2>Local Wi-Fi</h2>
   <fieldset>
-    <legend>Local Wi-Fi (for phones/tablets/ATAK)</legend>
-    <label>SSID<input type="text" id="softap_ssid" maxlength="32"></label>
+    <p class="hint">The 2.4GHz network phones, tablets and ATAK devices join.</p>
+    <label>SSID<input type="text" id="softap_ssid" maxlength="32" autocomplete="off"></label>
     <label>Passphrase
-      <input type="password" id="softap_psk" maxlength="64" placeholder="leave blank to keep current">
+      <input type="password" id="softap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
     </label>
-    <!-- 13 not 14: channel 14 is Japan-only and 802.11b-only, and esp_wifi
-         rejects it under most country settings. The firmware validates the
-         same bound server-side (provisioning_validate). -->
+    <p class="hint">8&ndash;63 characters, or blank for an open network.</p>
     <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
   </fieldset>
 
+  <h2>ATAK CoT relay</h2>
   <fieldset>
-    <legend>ATAK CoT relay</legend>
-    <label>Multicast group<input type="text" id="cot_group" maxlength="15"></label>
+    <label>Multicast group<input type="text" id="cot_group" maxlength="15" autocomplete="off"></label>
     <label>Port<input type="number" id="cot_port" min="1" max="65535"></label>
   </fieldset>
 
-  <button type="submit">Save</button>
-  <button type="button" id="rebootBtn">Reboot now</button>
+  <div class="actions">
+    <button type="submit" id="saveBtn">Save</button>
+    <button type="button" class="secondary" id="rebootBtn">Reboot</button>
+  </div>
+  <p class="hint">Saved changes apply on the next reboot.</p>
 </form>
 
-<div id="status"></div>
+<div id="status" role="status" aria-live="polite"></div>
 
 <script>
+'use strict';
+
+var statusTimer = null;
+
+function el(id) { return document.getElementById(id); }
+
 function showStatus(msg, ok) {
-  const el = document.getElementById('status');
-  el.textContent = msg;
-  el.className = ok ? 'ok' : 'err';
+  var s = el('status');
+  s.textContent = msg;
+  s.className = ok ? 'ok' : 'err';
+  clearTimeout(showStatus._t);
+  // Errors stay put; successes clear themselves.
+  if (ok) showStatus._t = setTimeout(function () { s.className = ''; }, 4000);
+}
+
+function fmtUptime(sec) {
+  if (typeof sec !== 'number') return '—';
+  var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600);
+  var m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  if (d) return d + 'd ' + h + 'h';
+  if (h) return h + 'h ' + m + 'm';
+  if (m) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+function setDot(id, up) {
+  el(id).className = 'dot ' + (up ? 'up' : 'down');
+}
+
+async function loadStatus() {
+  try {
+    var res = await fetch('/api/status', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var s = await res.json();
+
+    el('hdrNode').textContent = s.node_id || '';
+
+    var up = !!(s.uplink && s.uplink.connected);
+    setDot('dotUplink', up);
+    el('stUplink').textContent = up ? 'Connected' : 'Down';
+    el('stUplinkIp').textContent = (s.uplink && s.uplink.ip) || 'no lease';
+    el('stApIp').textContent = (s.softap && s.softap.ip) || '—';
+
+    var c = s.softap ? s.softap.clients : -1;
+    el('stClients').textContent = (c < 0) ? 'n/a' : String(c);
+
+    var cot = !!(s.cot && s.cot.running);
+    setDot('dotCot', cot);
+    // The relay only starts once the uplink has a lease, so "waiting" is a
+    // normal early-boot state rather than a fault.
+    el('stCot').textContent = cot ? (s.cot.group + ':' + s.cot.port) : (up ? 'Stopped' : 'Waiting');
+
+    if (s.system) {
+      el('stUptime').textContent = fmtUptime(s.system.uptime_s);
+      el('stHeap').textContent = Math.round(s.system.heap_free / 1024) + ' KB';
+      el('stRegion').textContent = (s.system.country || '??') + ' / ' + (s.system.partition || '?');
+    }
+  } catch (e) {
+    setDot('dotUplink', false);
+    setDot('dotCot', false);
+    el('stUplink').textContent = 'unreachable';
+  }
 }
 
 async function loadConfig() {
   try {
-    const res = await fetch('/api/config');
-    const cfg = await res.json();
-    document.getElementById('node_id').value = cfg.node_id || '';
-    document.getElementById('uplink_ssid').value = cfg.uplink.ssid || '';
-    document.getElementById('uplink_security').value = cfg.uplink.security || 'open';
-    document.getElementById('softap_ssid').value = cfg.softap.ssid || '';
-    document.getElementById('softap_channel').value = cfg.softap.channel || 6;
-    document.getElementById('cot_group').value = cfg.cot.group || '239.2.3.1';
-    document.getElementById('cot_port').value = cfg.cot.port || 6969;
+    var res = await fetch('/api/config', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var cfg = await res.json();
+    el('node_id').value = cfg.node_id || '';
+    el('uplink_ssid').value = (cfg.uplink && cfg.uplink.ssid) || '';
+    el('uplink_security').value = (cfg.uplink && cfg.uplink.security) || 'open';
+    el('softap_ssid').value = (cfg.softap && cfg.softap.ssid) || '';
+    el('softap_channel').value = (cfg.softap && cfg.softap.channel) || 6;
+    el('cot_group').value = (cfg.cot && cfg.cot.group) || '239.2.3.1';
+    el('cot_port').value = (cfg.cot && cfg.cot.port) || 6969;
   } catch (e) {
-    showStatus('Failed to load current config: ' + e, false);
+    showStatus('Failed to load current config: ' + e.message, false);
   }
 }
 
-document.getElementById('cfgForm').addEventListener('submit', async (ev) => {
+el('cfgForm').addEventListener('submit', async function (ev) {
   ev.preventDefault();
-  const body = {
-    node_id: document.getElementById('node_id').value,
+  var btn = el('saveBtn');
+  btn.disabled = true;
+  var body = {
+    node_id: el('node_id').value,
     uplink: {
-      ssid: document.getElementById('uplink_ssid').value,
-      security: document.getElementById('uplink_security').value,
-      psk: document.getElementById('uplink_psk').value,
+      ssid: el('uplink_ssid').value,
+      security: el('uplink_security').value,
+      psk: el('uplink_psk').value
     },
     softap: {
-      ssid: document.getElementById('softap_ssid').value,
-      psk: document.getElementById('softap_psk').value,
-      channel: parseInt(document.getElementById('softap_channel').value, 10),
+      ssid: el('softap_ssid').value,
+      psk: el('softap_psk').value,
+      channel: parseInt(el('softap_channel').value, 10)
     },
     cot: {
-      group: document.getElementById('cot_group').value,
-      port: parseInt(document.getElementById('cot_port').value, 10),
-    },
+      group: el('cot_group').value,
+      port: parseInt(el('cot_port').value, 10)
+    }
   };
   try {
-    const res = await fetch('/api/config', {
+    var res = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(body)
     });
     if (res.ok) {
       showStatus('Saved. Reboot to apply.', true);
-      document.getElementById('uplink_psk').value = '';
-      document.getElementById('softap_psk').value = '';
+      el('uplink_psk').value = '';
+      el('softap_psk').value = '';
     } else {
-      const text = await res.text().catch(() => '');
-      showStatus('Save failed (' + res.status + ')' + (text ? ': ' + text : ''), false);
+      // The firmware sends a specific reason (provisioning_validate); show it
+      // rather than a generic failure.
+      var text = await res.text().catch(function () { return ''; });
+      showStatus(text ? text.replace(/<[^>]*>/g, '').trim() : 'Save failed (' + res.status + ')', false);
     }
   } catch (e) {
-    showStatus('Save failed: ' + e, false);
+    showStatus('Save failed: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
   }
 });
 
-document.getElementById('rebootBtn').addEventListener('click', async () => {
-  showStatus('Rebooting...', true);
+el('rebootBtn').addEventListener('click', async function () {
+  if (!confirm('Reboot the gateway now? Local Wi-Fi will drop for a few seconds.')) return;
+  showStatus('Rebooting…', true);
+  clearInterval(statusTimer);
   try {
     await fetch('/api/reboot', { method: 'POST' });
   } catch (e) {
     /* connection drops as the device reboots - expected */
   }
+  // Poll until it answers again, so the page recovers on its own.
+  setTimeout(function () {
+    statusTimer = setInterval(loadStatus, 2000);
+  }, 3000);
 });
 
 loadConfig();
+loadStatus();
+statusTimer = setInterval(loadStatus, 5000);
 </script>
 </body>
 </html>

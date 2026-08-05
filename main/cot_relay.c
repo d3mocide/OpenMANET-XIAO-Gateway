@@ -280,6 +280,11 @@ fail:
     return err;
 }
 
+bool cot_relay_is_running(void)
+{
+    return s_sock >= 0;
+}
+
 esp_err_t cot_relay_inject(const void *data, size_t len)
 {
     if (s_sock < 0) {
