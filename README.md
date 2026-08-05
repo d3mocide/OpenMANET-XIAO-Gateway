@@ -10,15 +10,15 @@ node.
 client (phone/tablet/ATAK) → Wi-Fi → XIAO SoftAP → IP fwd/NAT → HaLow STA → HaLow AP → Pi → mesh
 ```
 
-See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design (network architecture, hardware
-choices, the NAT-vs-routed tradeoff, build order), [`docs/pi_side_reference.md`](docs/pi_side_reference.md)
+See [`design/DESIGN.md`](design/DESIGN.md) for the full design (network architecture, hardware
+choices, the NAT-vs-routed tradeoff, build order), [`design/pi_side_reference.md`](design/pi_side_reference.md)
 for what's confirmed vs. still-to-verify about the Pi side of the link, and
-[`docs/PROGRESS.md`](docs/PROGRESS.md) for current status and what's next - start there if
+[`design/PROGRESS.md`](design/PROGRESS.md) for current status and what's next - start there if
 you're picking this project back up.
 
 ## Flashing (no toolchain needed)
 
-`web-flasher/` is a browser-based flasher ([ESP Web Tools](https://esphome.github.io/esp-web-tools/),
+`docs/` is a browser-based flasher ([ESP Web Tools](https://esphome.github.io/esp-web-tools/),
 Web Serial - Chrome/Edge only) that flashes firmware built automatically by
 [`.github/workflows/build-firmware.yml`](.github/workflows/build-firmware.yml) on every push to
 `main`. It only flashes firmware with placeholder config; see "Configuring a node" below for
@@ -32,19 +32,19 @@ something a push can turn on by itself.
 
 `idf.py build` passes end-to-end against ESP-IDF v5.5.1 and the real `morsemicro/halow`
 component (verified in CI-less form by actually running the build, not just reading code -
-see `docs/PROGRESS.md` for the full list of what that surfaced and fixed: console peripheral,
+see `design/PROGRESS.md` for the full list of what that surfaced and fixed: console peripheral,
 IDF version floor, the real HaLow security enum, board pin/BCF/chip config, partition size).
 **Not yet done, and real-hardware-only from here:**
 
 - **Pi-side HaLow AP config** (SSID/security mode) is unconfirmed — see
-  `docs/pi_side_reference.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
+  `design/pi_side_reference.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
   defaults (see `gwcfg-*` console commands below).
 - **`CONFIG_HALOW_COUNTRY_CODE`** in `sdkconfig.defaults` is still the placeholder `"??"` - must
   be set to a real ISO 3166-1 country code before flashing, or the radio won't come up. This is a
   build-time Kconfig value, not something `gwcfg-*` can set at runtime.
 - Nothing has been flashed or run on physical hardware - a compiling build isn't a working
   radio link. Association/DHCP/NAT/CoT-relay behavior on real Pi + XIAO hardware is still
-  unverified (`docs/DESIGN.md` §8 steps 0-5).
+  unverified (`design/DESIGN.md` §8 steps 0-5).
 
 ## Building
 
@@ -101,11 +101,11 @@ main/
 ├── web_ui.c             on-device HTTP config UI (same NVS config as gwcfg-*)
 └── web_ui.html          embedded into the firmware image, not a separate filesystem
 partitions.csv           custom 3MB app partition (default 1MB is too small for this build)
-web-flasher/
+docs/
 └── index.html           ESP Web Tools browser flasher page (see .github/workflows/)
 .github/workflows/
-└── build-firmware.yml   builds firmware + deploys web-flasher/ to GitHub Pages on push
-docs/
+└── build-firmware.yml   builds firmware + deploys docs/ to GitHub Pages on push
+design/
 ├── DESIGN.md            full design document
 ├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link
 └── PROGRESS.md          current status, build-order checklist, and what's next

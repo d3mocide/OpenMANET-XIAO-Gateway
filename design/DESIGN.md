@@ -120,7 +120,7 @@ radios the way batman-adv does).
   **Correction (verified against the real morsemicro/halow SDK source, not just its docs):**
   HaLow (802.11ah) has no WPA2-PSK mode at all - `enum mmwlan_security_type` in the SDK's
   `mmwlan.h` only defines `MMWLAN_OPEN`, `MMWLAN_OWE`, and `MMWLAN_SAE`. The real option set for
-  §6.3 is **open / OWE / SAE**, not WPA2-PSK - see `docs/pi_side_reference.md`.
+  §6.3 is **open / OWE / SAE**, not WPA2-PSK - see `design/pi_side_reference.md`.
 
 ### 4.2 Downlink (XIAO → phones)
 
