@@ -16,6 +16,7 @@ idf_component_register(
         console
         lwip
         esp_http_server
+        esp_timer
         json
     EMBED_FILES "web_ui.html"
 )

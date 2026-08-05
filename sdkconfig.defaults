@@ -63,3 +63,13 @@ CONFIG_HALOW_COUNTRY_CODE="??"
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+
+# --- Core dumps to flash (partitions.csv has a 64K coredump partition).
+# Hardware bring-up means crashes will happen while nobody is attached to the
+# console; without this a panic leaves nothing behind but a lost session. With
+# it, `idf.py coredump-info` reconstructs the backtrace and task states after
+# the fact. ELF format because it carries task/stack detail the raw binary
+# format doesn't. ---
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y

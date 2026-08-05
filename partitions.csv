@@ -1,5 +1,16 @@
 # ESP-IDF Partition Table
-# Name,     Type, SubType, Offset,  Size, Flags
-nvs,        data, nvs,     0x9000,  24K,
-phy_init,   data, phy,     0xf000,  4K,
-factory,    app,  factory, 0x10000, 3M,
+#
+# Flash is a confirmed 8MB, so this layout uses well under half of it. The
+# unallocated tail is deliberate headroom for a future dual-OTA layout - see
+# design/TECHNICAL_REVIEW.md "Deferred: OTA". Changing the table on already-
+# deployed units requires a USB cable, so the decision is being made once the
+# binary size settles rather than guessed at now.
+#
+# Name,     Type, SubType,  Offset,  Size, Flags
+nvs,        data, nvs,      0x9000,  24K,
+phy_init,   data, phy,      0xf000,  4K,
+factory,    app,  factory,  0x10000, 3M,
+# Panic handler writes a backtrace here instead of only to a console nobody
+# may be watching - this is the phase where crashes happen unattended, on
+# hardware, away from a terminal. Read back with `idf.py coredump-info`.
+coredump,   data, coredump,        , 64K,

@@ -17,6 +17,18 @@ static const char *TAG = "uplink_halow";
 #define HALOW_CONNECT_TIMEOUT_MS 15000
 #define LINK_POLL_INTERVAL_MS    2000
 
+/* How long to wait for a DHCP lease after 802.11 association before
+ * concluding the lease isn't coming. Association succeeding while DHCP never
+ * completes is a realistic failure (no/misconfigured DHCP server on the Pi
+ * side), and without a bound here the task would sit in its "waiting for
+ * lease" poll loop forever, never retrying and never reporting anything. */
+#define DHCP_LEASE_TIMEOUT_MS 30000
+
+/* On the first timeout the DHCP client is restarted in place, which fixes
+ * the transient cases cheaply. If a lease still doesn't arrive, fall all the
+ * way back to re-associating. */
+#define DHCP_RESTART_ATTEMPTS 2
+
 static gw_uplink_config_t s_cfg;
 static esp_netif_t *s_netif = NULL;
 static volatile bool s_associated = false; /* 802.11 association only */
@@ -58,6 +70,13 @@ static void mm_sta_state_cb(enum mmwlan_sta_state sta_state)
     case MMWLAN_STA_DISABLED:
     default:
         s_associated = false;
+        /* Signal the waiter here too. A connect attempt that fails fast
+         * should retry after the backoff, not sit out the full
+         * HALOW_CONNECT_TIMEOUT_MS first; halow_sta_connect() distinguishes
+         * the two by re-checking s_associated after the take succeeds. */
+        if (s_connect_sem != NULL) {
+            xSemaphoreGive(s_connect_sem);
+        }
         break;
     }
 }
@@ -124,12 +143,30 @@ static esp_err_t halow_sta_bringup(const gw_uplink_config_t *cfg, esp_netif_t **
     mmhalow_wifi_config_t conf = {
         .sta = MMWLAN_STA_ARGS_INIT,
     };
-    memcpy(conf.sta.ssid, cfg->ssid, strlen(cfg->ssid));
-    conf.sta.ssid_len = strlen(cfg->ssid);
+
+    /* Bounded by the destination field, not just by our own buffer: these
+     * are two independently-sized structs (ours from gw_config.h, theirs
+     * from mmwlan.h) and a copy sized only by strlen() would overflow if
+     * theirs is ever the smaller of the two. */
+    size_t ssid_len = strlen(cfg->ssid);
+    if (ssid_len > sizeof(conf.sta.ssid)) {
+        ESP_LOGE(TAG, "uplink SSID is %u bytes, max %u", (unsigned)ssid_len,
+                 (unsigned)sizeof(conf.sta.ssid));
+        return ESP_ERR_INVALID_ARG;
+    }
+    memcpy(conf.sta.ssid, cfg->ssid, ssid_len);
+    conf.sta.ssid_len = ssid_len;
+
     conf.sta.security_type = halow_security_from_gw(cfg->security);
     if (conf.sta.security_type == MMWLAN_SAE) {
-        memcpy(conf.sta.passphrase, cfg->psk, strlen(cfg->psk));
-        conf.sta.passphrase_len = strlen(cfg->psk);
+        size_t psk_len = strlen(cfg->psk);
+        if (psk_len > sizeof(conf.sta.passphrase)) {
+            ESP_LOGE(TAG, "uplink passphrase is %u bytes, max %u", (unsigned)psk_len,
+                     (unsigned)sizeof(conf.sta.passphrase));
+            return ESP_ERR_INVALID_ARG;
+        }
+        memcpy(conf.sta.passphrase, cfg->psk, psk_len);
+        conf.sta.passphrase_len = psk_len;
     }
 
     return mmhalow_set_config(WIFI_IF_STA, &conf);
@@ -139,6 +176,10 @@ static esp_err_t halow_sta_connect(TickType_t timeout_ticks)
 {
     if (s_connect_sem == NULL) {
         s_connect_sem = xSemaphoreCreateBinary();
+        if (s_connect_sem == NULL) {
+            ESP_LOGE(TAG, "couldn't create connect semaphore");
+            return ESP_ERR_NO_MEM;
+        }
     }
     xSemaphoreTake(s_connect_sem, 0); /* drain any stale signal before retrying */
 
@@ -147,12 +188,38 @@ static esp_err_t halow_sta_connect(TickType_t timeout_ticks)
         return err;
     }
 
-    return xSemaphoreTake(s_connect_sem, timeout_ticks) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+    if (xSemaphoreTake(s_connect_sem, timeout_ticks) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* The callback signals both outcomes, so a successful take doesn't by
+     * itself mean association - it means the state settled. */
+    return s_associated ? ESP_OK : ESP_FAIL;
 }
 
 static bool halow_sta_link_up(void)
 {
     return s_associated;
+}
+
+/* Waits up to timeout_ms for the DHCP lease, giving up early if the link
+ * drops underneath us. Returns true if the uplink has an IP. */
+static bool wait_for_dhcp_lease(uint32_t timeout_ms)
+{
+    uint32_t waited_ms = 0;
+
+    while (waited_ms < timeout_ms) {
+        if (s_has_ip) {
+            return true;
+        }
+        if (!halow_sta_link_up()) {
+            return false; /* association lost - outer loop handles it */
+        }
+        vTaskDelay(pdMS_TO_TICKS(LINK_POLL_INTERVAL_MS));
+        waited_ms += LINK_POLL_INTERVAL_MS;
+    }
+
+    return s_has_ip;
 }
 
 static void reconnect_task(void *arg)
@@ -173,6 +240,40 @@ static void reconnect_task(void *arg)
         backoff_ms = RECONNECT_BACKOFF_MIN_MS;
         ESP_LOGI(TAG, "HaLow STA associated, waiting for DHCP lease...");
 
+        /* Association alone isn't usable - NAT and the CoT relay both need a
+         * real address (see ip_event_handler's comment). Bound the wait so a
+         * silent DHCP failure can't strand the task here indefinitely. */
+        bool leased = false;
+        for (int attempt = 0; attempt < DHCP_RESTART_ATTEMPTS; attempt++) {
+            if (wait_for_dhcp_lease(DHCP_LEASE_TIMEOUT_MS)) {
+                leased = true;
+                break;
+            }
+            if (!halow_sta_link_up()) {
+                break; /* dropped while waiting - re-associate below */
+            }
+            if (attempt + 1 < DHCP_RESTART_ATTEMPTS) {
+                ESP_LOGW(TAG, "associated but no DHCP lease after %u ms, restarting DHCP client",
+                         (unsigned)DHCP_LEASE_TIMEOUT_MS);
+                esp_netif_dhcpc_stop(s_netif);
+                esp_err_t dhcp_err = esp_netif_dhcpc_start(s_netif);
+                if (dhcp_err != ESP_OK) {
+                    ESP_LOGW(TAG, "dhcpc restart failed: %s", esp_err_to_name(dhcp_err));
+                }
+            }
+        }
+
+        if (!leased && halow_sta_link_up()) {
+            /* Still associated but unusable. Fall through to re-associate:
+             * the loop's next halow_sta_connect() is the only recovery lever
+             * available without a disconnect API we've verified against the
+             * real component headers (see design/TECHNICAL_REVIEW.md). */
+            ESP_LOGW(TAG, "no DHCP lease on this association, re-associating");
+            set_has_ip(false);
+            continue;
+        }
+
+        /* Leased and healthy - hold here until the link actually drops. */
         while (halow_sta_link_up()) {
             vTaskDelay(pdMS_TO_TICKS(LINK_POLL_INTERVAL_MS));
         }

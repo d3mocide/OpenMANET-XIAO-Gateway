@@ -10,6 +10,9 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "lwip/inet.h"
+#include "lwip/sockets.h"
 
 static const char *TAG = "web_ui";
 
@@ -18,11 +21,95 @@ extern const char web_ui_html_end[] asm("_binary_web_ui_html_end");
 
 #define POST_BODY_MAX 1024
 
-/* Live in-RAM config, shared with the console (provisioning.c) and app_main.c. */
+/* Long enough for the JSON response to be written to the socket and read by
+ * the browser before the CPU resets underneath it. */
+#define REBOOT_DELAY_US 500000
+
+/* Live in-RAM config, shared with the console (provisioning.c) and app_main.c.
+ * All access goes through provisioning_config_lock(). */
 static gw_config_t *s_cfg = NULL;
+
+/* The SoftAP netif, used to decide whether a request came from a local
+ * client or from the mesh - see request_is_local(). */
+static esp_netif_t *s_softap_netif = NULL;
+
+/* Extracts the peer's IPv4 address from a request's socket. esp_http_server
+ * may be listening on an IPv6 socket depending on lwIP config, in which case
+ * IPv4 clients appear as IPv4-mapped addresses. */
+static bool peer_ipv4(httpd_req_t *req, uint32_t *out_addr)
+{
+    int sockfd = httpd_req_to_sockfd(req);
+    if (sockfd < 0) {
+        return false;
+    }
+
+    struct sockaddr_storage peer;
+    socklen_t len = sizeof(peer);
+    if (getpeername(sockfd, (struct sockaddr *)&peer, &len) < 0) {
+        return false;
+    }
+
+    if (peer.ss_family == AF_INET) {
+        *out_addr = ((struct sockaddr_in *)&peer)->sin_addr.s_addr;
+        return true;
+    }
+#if LWIP_IPV6
+    if (peer.ss_family == AF_INET6) {
+        struct sockaddr_in6 *peer6 = (struct sockaddr_in6 *)&peer;
+        if (IN6_IS_ADDR_V4MAPPED(&peer6->sin6_addr)) {
+            memcpy(out_addr, &peer6->sin6_addr.s6_addr[12], sizeof(*out_addr));
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+/* httpd_start() binds every interface, so once the HaLow uplink is up these
+ * endpoints would otherwise be reachable from the entire mesh - including
+ * unauthenticated POST /api/config and POST /api/reboot. There's no auth on
+ * this UI by design (DESIGN.md §5.6), so the SoftAP subnet *is* the
+ * authorization boundary: enforce it explicitly rather than relying on the
+ * mesh being friendly.
+ *
+ * Fails closed. If the SoftAP netif is missing or has no address, nothing is
+ * on its subnet anyway, so there is no client this could lock out. */
+static bool request_is_local(httpd_req_t *req)
+{
+    if (s_softap_netif == NULL) {
+        return false;
+    }
+
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(s_softap_netif, &ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        return false;
+    }
+
+    uint32_t peer_addr;
+    if (!peer_ipv4(req, &peer_addr)) {
+        return false;
+    }
+
+    return (peer_addr & ip_info.netmask.addr) == (ip_info.ip.addr & ip_info.netmask.addr);
+}
+
+/* Guard for every handler. Returns true if the request should be refused,
+ * having already sent the error response. */
+static bool reject_if_remote(httpd_req_t *req)
+{
+    if (request_is_local(req)) {
+        return false;
+    }
+    ESP_LOGW(TAG, "refused %s from outside the SoftAP subnet", req->uri);
+    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "config is only reachable from the local Wi-Fi");
+    return true;
+}
 
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
     const size_t len = web_ui_html_end - web_ui_html_start;
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, web_ui_html_start, len);
@@ -30,7 +117,17 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
 static esp_err_t config_get_handler(httpd_req_t *req)
 {
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
     cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    provisioning_config_lock();
     cJSON_AddStringToObject(root, "node_id", s_cfg->node_id);
 
     cJSON *uplink = cJSON_AddObjectToObject(root, "uplink");
@@ -46,14 +143,19 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     cJSON *cot = cJSON_AddObjectToObject(root, "cot");
     cJSON_AddStringToObject(cot, "group", s_cfg->cot.group);
     cJSON_AddNumberToObject(cot, "port", s_cfg->cot.port);
+    provisioning_config_unlock();
 
     char *out = cJSON_PrintUnformatted(root);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, out);
-
-    free(out);
     cJSON_Delete(root);
-    return ESP_OK;
+    if (out == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, out);
+    free(out);
+    return err;
 }
 
 /* Copies a JSON string field into out (bounded, NUL-terminated) if present
@@ -76,6 +178,10 @@ static void copy_json_str(const cJSON *parent, const char *key, char *out, size_
 
 static esp_err_t config_post_handler(httpd_req_t *req)
 {
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
     int total_len = req->content_len;
     if (total_len <= 0 || total_len >= POST_BODY_MAX) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large or empty");
@@ -102,8 +208,11 @@ static esp_err_t config_post_handler(httpd_req_t *req)
 
     /* Validate into a scratch copy first so a rejected request never
      * partially mutates the live config. */
+    provisioning_config_lock();
     gw_config_t work;
     memcpy(&work, s_cfg, sizeof(work));
+    provisioning_config_unlock();
+
     bool too_long = false;
 
     copy_json_str(root, "node_id", work.node_id, sizeof(work.node_id), &too_long);
@@ -137,7 +246,9 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         copy_json_str(cot, "group", work.cot.group, sizeof(work.cot.group), &too_long);
         const cJSON *port = cJSON_GetObjectItemCaseSensitive(cot, "port");
         if (cJSON_IsNumber(port)) {
-            work.cot.port = (uint16_t)port->valueint;
+            work.cot.port = (port->valueint >= 0 && port->valueint <= 65535)
+                                ? (uint16_t)port->valueint
+                                : 0; /* out of range - provisioning_validate() rejects below */
         }
     }
 
@@ -148,6 +259,15 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    /* Semantic validation on top of the length checks above: this is what
+     * stops a 4-character Wi-Fi passphrase or channel 99 from being saved
+     * and taking the SoftAP - and with it this very UI - down at next boot. */
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, reason);
+        return ESP_FAIL;
+    }
+
     esp_err_t err = provisioning_save(&work);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "provisioning_save failed: %s", esp_err_to_name(err));
@@ -155,22 +275,64 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    provisioning_config_lock();
     memcpy(s_cfg, &work, sizeof(*s_cfg));
+    provisioning_config_unlock();
+
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"status\":\"saved\"}");
 }
 
-static esp_err_t reboot_post_handler(httpd_req_t *req)
+static void reboot_timer_cb(void *arg)
 {
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, "{\"status\":\"rebooting\"}");
+    (void)arg;
+    ESP_LOGI(TAG, "rebooting on web UI request");
     esp_restart();
-    return ESP_OK; /* unreachable */
 }
 
-esp_err_t web_ui_start(gw_config_t *cfg)
+static esp_err_t reboot_post_handler(httpd_req_t *req)
 {
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
+    /* Restarting inline would reset the CPU before the response drains out
+     * of the socket, so the browser sees a connection reset instead of the
+     * acknowledgement. Hand off to a one-shot timer and return normally. */
+    const esp_timer_create_args_t args = {
+        .callback = reboot_timer_cb,
+        .name = "web_ui_reboot",
+    };
+    esp_timer_handle_t timer;
+    esp_err_t err = esp_timer_create(&args, &timer);
+    if (err == ESP_OK) {
+        err = esp_timer_start_once(timer, REBOOT_DELAY_US);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "couldn't schedule reboot: %s", esp_err_to_name(err));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "failed to schedule reboot");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"status\":\"rebooting\"}");
+}
+
+esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
+{
+    if (cfg == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (softap_netif == NULL) {
+        /* Without it there's no subnet to authorize against, and every
+         * request would be refused - starting the server would be
+         * misleading. */
+        ESP_LOGE(TAG, "no SoftAP netif - refusing to start an unreachable web UI");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     s_cfg = cfg;
+    s_softap_netif = softap_netif;
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
@@ -193,10 +355,11 @@ esp_err_t web_ui_start(gw_config_t *cfg)
         err = httpd_register_uri_handler(server, &routes[i]);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "failed to register %s: %s", routes[i].uri, esp_err_to_name(err));
+            httpd_stop(server);
             return err;
         }
     }
 
-    ESP_LOGI(TAG, "web UI started");
+    ESP_LOGI(TAG, "web UI started (SoftAP clients only)");
     return ESP_OK;
 }

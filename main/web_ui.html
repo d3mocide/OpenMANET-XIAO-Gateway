@@ -49,7 +49,10 @@
     <label>Passphrase
       <input type="password" id="softap_psk" maxlength="64" placeholder="leave blank to keep current">
     </label>
-    <label>Channel<input type="number" id="softap_channel" min="1" max="14"></label>
+    <!-- 13 not 14: channel 14 is Japan-only and 802.11b-only, and esp_wifi
+         rejects it under most country settings. The firmware validates the
+         same bound server-side (provisioning_validate). -->
+    <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
   </fieldset>
 
   <fieldset>

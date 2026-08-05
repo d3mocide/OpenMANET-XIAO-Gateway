@@ -107,11 +107,11 @@ main/
 ├── provisioning.c       NVS-backed config load/save + gwcfg-* console commands
 ├── uplink_halow.c       HaLow STA uplink via morsemicro/halow, reconnect/backoff
 ├── downlink_softap.c    local 2.4GHz SoftAP + DHCP for phones/tablets/ATAK devices
-├── ip_forward_nat.c     NAPT between the uplink and SoftAP netifs
+├── ip_forward_nat.c     NAPT on the SoftAP netif + uplink as default route
 ├── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
-├── web_ui.c             on-device HTTP config UI (same NVS config as gwcfg-*)
+├── web_ui.c             on-device HTTP config UI, SoftAP clients only (same NVS config as gwcfg-*)
 └── web_ui.html          embedded into the firmware image, not a separate filesystem
-partitions.csv           custom 3MB app partition (default 1MB is too small for this build)
+partitions.csv           custom 3MB app partition (default 1MB is too small) + 64K coredump
 docs/
 └── index.html           ESP Web Tools browser flasher page, region picker + per-region manifest
 country-configs/
@@ -122,5 +122,6 @@ country-configs/
 design/
 ├── DESIGN.md            full design document
 ├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link
+├── TECHNICAL_REVIEW.md  pre-hardware review: findings, fixes, and the open OTA decision
 └── PROGRESS.md          current status, build-order checklist, and what's next
 ```
