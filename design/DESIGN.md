@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-A battery/portable-power node, built on a Seeed XIAO ESP32-S3 + Wio-WM6180 (HaLow) module,
+A battery/portable-power node, built on a Seeed XIAO ESP32-S3 + Seeed XIAO WM6108 (HaLow) module,
 that acts as a **mesh-connected access point**: ordinary Wi-Fi client devices (phones, tablets,
 ATAK end-user devices) associate to the XIAO's local 2.4 GHz AP, and the XIAO relays their IP
 traffic — including ATAK Cursor-on-Target (CoT) multicast — over a Wi-Fi HaLow uplink into an
@@ -46,17 +46,21 @@ This matters because the XIAO has to interoperate with it, not invent its own to
   existing "lightweight client/sensor node" mode in openmanetd; every current node is a full Pi.
   This confirms CoT is already a first-class citizen on this mesh, which is good news for the
   XIAO's application layer (see §5.3).
-- **Same silicon on both ends:** the WM6180-for-XIAO module and the Pi's WM6108/WM1302 radios
+- **Same silicon on both ends:** the XIAO WM6108 module and the Pi's WM6108/WM1302 radios
   are both **Morse Micro MM6108**. PHY/MAC behavior, channel plan, and regulatory config should
   line up directly; the two ends differ only in host stack (Linux mac80211/hostapd on the Pi vs.
   Morse's embedded SDK on the XIAO).
 
 ## 3. Hardware
 
+> Build details — exact BOM, the pin map, antennas, power, and how to verify the board before
+> trusting the firmware — live in [`HARDWARE.md`](HARDWARE.md). This section covers *why* this
+> hardware was chosen.
+
 | Component | Choice | Why |
 |---|---|---|
 | MCU | **XIAO ESP32-S3** | Only combo Seeed/Morse currently document and test against this exact module (official wiki tutorial + `Seeed-Studio/mm-iot-esp32` + `RobertWCarey/esp-halow-examples` are all S3). Dual-core Xtensa LX7, native 2.4 GHz Wi-Fi (used for the local AP), enough RAM/flash headroom for lwIP + NAT + a HaLow driver. |
-| HaLow radio | **Wio-WM6180 for XIAO** (MM6108, SPI) | Matches the Pi-side chipset; SPI is the confirmed host interface. |
+| HaLow radio | **Seeed XIAO WM6108** (MM6108, SPI) | Matches the Pi-side chipset; SPI is the confirmed host interface. |
 | Local client radio | **XIAO S3's onboard 2.4 GHz Wi-Fi**, SoftAP mode | Free — no extra hardware. Standard phones/tablets/ATAK devices already speak this. |
 
 **C5 note:** Morse Micro's *current* SDK path — the `morsemicro/halow` ESP Component Registry
@@ -64,7 +68,7 @@ package (v2.11.2-esp32-2 as of writing), which supersedes the now-archived `mm-i
 lists ESP32-C5 as a supported target alongside S3/C3/C6/P4, and now supports AP mode (not just
 STA) with WPA3-SAE via a real wpa_supplicant/hostapd port. That's promising for a v2 (C5's native
 Wi-Fi 6 + RISC-V + lower power are attractive for a battery node), but nobody has published the
-C5 + WM6180 pairing specifically yet. **Recommendation: build v1 on S3 (known-good), keep C5 as
+C5 + WM6108 pairing specifically yet. **Recommendation: build v1 on S3 (known-good), keep C5 as
 an explicit follow-up once the SDK/module combination has real mileage.**
 
 ## 4. Network architecture
@@ -72,7 +76,7 @@ an explicit follow-up once the SDK/module combination has real mileage.**
 ```
  [Phone / Tablet / ATAK device]              [Phone / Tablet / ATAK device]
         │ 2.4 GHz Wi-Fi (XIAO SoftAP)                │ 2.4 GHz Wi-Fi (Pi onboard AP)
-        │ DHCP from XIAO, e.g. 192.168.50.0/24        │ DHCP from openmanetd, mesh subnet
+        │ DHCP from XIAO, e.g. 172.16.50.0/24        │ DHCP from openmanetd, mesh subnet
         ▼                                             ▼
  ┌─────────────────────────────┐            ┌───────────────────────────────┐
  │        XIAO ESP32-S3         │            │              Pi                │
@@ -80,7 +84,7 @@ an explicit follow-up once the SDK/module combination has real mileage.**
  │ │ SoftAP   │IP │ HaLow STA  │ │            │ │ onboard AP │  │ HaLow radio │ │
  │ │ (esp_wifi)◄─►│(morsemicro/│ │            │ │ (bridged   │  │ (hostapd_s1g│ │
  │ │ netif    │fwd│ halow,     │ │            │ │  into bat0)│  │  AP mode,   │ │
- │ └─────────┘   │ WM6180)    │ │            │ └────────────┘  │  see §4.1)  │ │
+ │ └─────────┘   │ WM6108)    │ │            │ └────────────┘  │  see §4.1)  │ │
  │                └─────┬──────┘ │            │                 └──────┬──────┘ │
  └──────────────────────┼────────┘            └────────────────────────┼────────┘
                          │  HaLow (sub-GHz), STA → AP association,      │

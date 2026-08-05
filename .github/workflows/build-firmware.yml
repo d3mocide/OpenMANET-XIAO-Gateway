@@ -3,6 +3,12 @@ name: Build firmware and deploy web flasher
 on:
   push:
     branches: [main]
+  # Build on PRs too. Without this a branch can be broken all the way to merge
+  # and the first sign of it is a failed deploy on main - which is also the
+  # moment the web flasher stops getting new firmware. PRs build one region
+  # only (see the matrix below) and never deploy.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +17,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  # Keyed by ref so a PR build doesn't cancel main's deploy, or vice versa.
+  group: "pages-${{ github.ref }}"
   cancel-in-progress: false
 
 jobs:
@@ -27,7 +34,12 @@ jobs:
         # entry here requires a matching country-configs/<CODE>.defaults AND
         # a real regdb entry for that code upstream; other countries aren't
         # buildable until Morse Micro ships regulatory data for them.
-        country: [US, CA, EU, GB, AU, NZ, JP, KR, IN]
+        #
+        # Pull requests build US only. The regions differ by exactly one
+        # Kconfig string, so nine builds of the same source find nine copies of
+        # the same compile error - one is enough to gate a merge, and the full
+        # matrix still runs on main where the artifacts are actually published.
+        country: ${{ fromJSON(github.event_name == 'pull_request' && '["US"]' || '["US","CA","EU","GB","AU","NZ","JP","KR","IN"]') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -112,8 +124,11 @@ jobs:
           name: region-${{ matrix.country }}
           path: region
 
+  # Publishing steps only. A PR build stops after `build` above: it proves the
+  # firmware compiles without touching the live flasher page.
   assemble:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -136,6 +151,7 @@ jobs:
 
   deploy:
     needs: assemble
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

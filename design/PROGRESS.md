@@ -7,9 +7,79 @@ for Pi-side facts, and [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) for the pre-
 findings before making changes. Update this file's checklist whenever you finish a step below or
 learn something that changes it.
 
-- **Branch:** `claude/technical-review-performance-mmq12j`
-- **PR:** https://github.com/d3mocide/OpenMANET-XIAO-Gateway/pull/1
+- **Branch:** `claude/hardware-testing-readiness-8s2tde`
 - **Last updated:** 2026-08-05
+
+## Hardware-testing readiness pass (2026-08-05)
+
+The most recent pass. Its purpose was narrow: make the *first contact with real hardware*
+diagnosable, and fix what a review found before it costs bench time.
+
+**One confirmed defect, same class as the two the earlier review caught** - compiles clean, logs
+success, fails on hardware in a way that points at the wrong subsystem:
+
+- **SoftAP clients were handed no DNS server.** `ip_forward_nat_init()` did two of the three things
+  ESP-IDF's NAT recipe requires (default route, NAPT) and never propagated the uplink's DNS server
+  into the SoftAP's DHCP server. Verified against pinned v5.5.1 source, not from memory:
+  `components/lwip/apps/dhcpserver/dhcpserver.c:172` initializes `dhcps->dhcps_dns = 0x00` and
+  line 466 only emits the option when explicitly enabled, while
+  `examples/wifi/softap_sta/main/softap_sta.c:168-177` is the reference implementation of the step
+  we were missing. **Failure mode:** phones associate, get an address and a gateway, and every
+  hostname lookup fails while raw IP works - which during step 4 looks exactly like "NAT is
+  broken". Android additionally flags the network as having no internet and may fall back to
+  cellular. Fixed.
+
+**Two robustness bugs that would have made the first flash hard to read:**
+
+- `app_main()` started the reconnect task even when `uplink_halow_init()` had failed. Against an
+  uninitialized radio - the single most likely first-hardware failure - that spins forever, and its
+  once-per-second error log buries the one line saying what actually went wrong. It now refuses to
+  start, says so clearly, and leaves SoftAP/web UI/console up so the node is still workable.
+- `on_uplink_state()` set its "already done" flag *before* attempting NAT and the CoT relay, so a
+  single transient failure permanently disabled the datapath until a power cycle. The flag is now
+  set only on success, and a failed attempt retries on the next reconnect.
+
+**Bring-up instrumentation, which was the real gap** - the firmware could fail in five distinct
+ways that all presented identically:
+
+| Added | Answers |
+|---|---|
+| `uplink_link_state_t` + `/api/status.uplink.state` | "not associated" vs. "associated, no lease" - DESIGN.md §8 steps 1 and 2, with completely different causes. A single boolean collapsed them. |
+| `gwcfg-radio` / auto-logged at boot | Does host↔MM6108 SPI work? Rules out wiring/pins/BCF/chip in one command. |
+| `gwcfg-scan` + web UI scan button | Is the Pi's AP audible, on what channel, at what strength? Results are clickable to fill the SSID field. Prints the scanned region, so "AP is down" can be told apart from "AP is on a channel this build may not use". |
+| RSSI (`mmwlan_get_rssi()`) on console + status panel | Separates "configured wrong" from "configured right but too weak". |
+| Status LED (GPIO21) | Link state with no cable and no phone attached. |
+| `log_buffer.c` + `/api/log` | The last ~6KB of log, over HTTP. Coredumps cover crashes; this covers "it's running and misbehaving". |
+| BOOT-button factory reset | Config recovery without a cable. |
+
+**Also in this pass:**
+
+- Default SoftAP subnet **192.168.50.0/24 → 172.16.50.0/24** (`GW_CONFIG_VERSION` bumped to 2).
+  192.168.x collides with home routers, phone hotspots and esp_netif's own 192.168.4.1 default; an
+  overlap between a client's remembered network and this one is very hard to diagnose in the field.
+- `CONFIG_HALOW_COUNTRY_CODE` default `"??"` → `"US"`, so a from-source build produces a firmware
+  whose radio can actually come up. A fallback, not a deployment claim - the web flasher's region
+  picker remains where the real choice is made.
+- **CI now builds on pull requests** (US only - the regions differ by one Kconfig string, so nine
+  builds find nine copies of the same error). Deploy jobs are gated to non-PR events.
+- New docs: [`HARDWARE.md`](HARDWARE.md) (BOM, board pairing, pin map, antennas, power),
+  [`BRINGUP.md`](BRINGUP.md) (the runbook), [`FEATURES.md`](FEATURES.md) (what isn't built, what
+  each involves, in what order).
+
+**A documented open question turned out to have an answer.** Earlier notes said no
+`mmhalow_disconnect()` could be confirmed against the real component headers, and the DHCP-failure
+recovery path worked around its absence by re-calling `mmhalow_connect()` on a live association.
+The component's public `mmhalow.h` does declare `esp_err_t mmhalow_disconnect()` (implemented as
+`mmwlan_sta_disable()`), confirmed by fetching v2.11.2-esp32-2 from the ESP Component Registry and
+reading it. That path now disconnects properly first.
+
+**Build re-verified after all of the above:** `idf.py build` against ESP-IDF v5.5.1, **zero errors,
+zero warnings**, binary `0x1AB1C0` (1.67MB), **44% free** in the 3MB app slot, and `flash_args`
+still confirms `0x10000 ota_data_initial.bin` / `0x20000 xiao_halow_gateway.bin` - the offsets the
+web flasher manifest asserts.
+
+**Still not flashed to hardware.** Everything above makes the first flash *legible*; none of it
+makes it *proven*.
 
 ## Status at a glance
 
@@ -165,30 +235,45 @@ changes.
 | Module | File | Status |
 |---|---|---|
 | Local SoftAP + DHCP | `main/downlink_softap.c` | Implemented, compiles clean. Not yet flashed/tested on hardware. |
-| HaLow STA uplink | `main/uplink_halow.c` | Implemented against the real `morsemicro/halow` API (see above), compiles clean. Not yet flashed/tested on hardware. |
-| NAPT (uplink NAT) | `main/ip_forward_nat.c` | Implemented via `esp_netif_napt_enable()`, called once the uplink gets an IP. Not yet flashed/tested. |
+| HaLow STA uplink | `main/uplink_halow.c` | Implemented against the real `morsemicro/halow` API (see above), compiles clean. Exposes a four-state link state, RSSI, a blocking scan wrapper, and radio version info for bring-up. Not yet flashed/tested on hardware. |
+| NAPT (uplink NAT) | `main/ip_forward_nat.c` | Implemented: DNS propagation into the SoftAP's DHCP offers, uplink as default route, `esp_netif_napt_enable()` on the downlink - all three, called once the uplink gets an IP. Not yet flashed/tested. |
 | CoT multicast relay | `main/cot_relay.c` | Implemented: single socket joined to 239.2.3.1:6969 on both netifs, uses `IP_PKTINFO`/`recvmsg()` to identify arrival interface and avoid a forwarding loop. Not yet flashed/tested. |
 | Provisioning (NVS + console) | `main/provisioning.c` | Implemented: `gwcfg-show` / `gwcfg-set-uplink` / `gwcfg-set-softap` / `gwcfg-set-node` / `gwcfg-save` / `gwcfg-reset` over the serial console (now on the right USB peripheral), NVS blob load/save, placeholder defaults. Not yet flashed/tested. |
-| Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML, GET `/api/status`, GET/POST `/api/config`, POST `/api/reboot`, same NVS config as the console. SoftAP clients only; no authentication yet. Restyled to share the web flasher's design system (dark mode included). Not yet flashed/tested. |
-| App wiring | `main/app_main.c` | Brings up SoftAP + console + web UI immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP. Not yet flashed/tested. |
+| Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML, GET `/api/status`, GET/POST `/api/config`, GET `/api/log`, POST `/api/scan`, POST `/api/reboot`, same NVS config as the console. SoftAP clients only; no authentication yet. Restyled to share the web flasher's design system (dark mode included). Not yet flashed/tested. |
+| Status LED | `main/status_led.c` | Implemented: on-board GPIO21 LED blinks the uplink link state (radio failed / searching / associated-no-lease / up). The only instrument that needs neither cable nor phone. Not yet flashed/tested. |
+| Factory reset | `main/factory_reset.c` | Implemented: 5s BOOT-button hold restores defaults and reboots, LED acknowledges at 1.5s. Runtime hold, not hold-at-power-on (that enters the ROM bootloader). Not yet flashed/tested. |
+| Log ring buffer | `main/log_buffer.c` | Implemented: `esp_log_set_vprintf` tee into a 6KB RAM ring, served at `/api/log`. Chains to the previous handler so serial output is unaffected. Not yet flashed/tested. |
+| App wiring | `main/app_main.c` | Brings up the log buffer, LED, factory-reset watcher, SoftAP, console and web UI immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP, retrying on the next reconnect if that fails. Skips the reconnect task entirely if the radio never initialized. Not yet flashed/tested. |
 | Web flasher + CI | `docs/`, `country-configs/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page with a region picker + per-region GitHub Actions build/deploy matrix (`US`/`CA`/`EU`/`GB`/`AU`/`NZ`/`JP`/`KR`/`IN` - all 9 regdb-defined domains). **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
 
 ## Build-order checklist (DESIGN.md §8)
 
+**Procedure for all of this now lives in [`BRINGUP.md`](BRINGUP.md)** - what to run at each step,
+what a pass looks like, and how to tell identical-looking failures apart. This list stays as the
+status tracker.
+
 - [ ] **Step 0** - Confirm the Pi's HaLow radio config (`hostapd_s1g` AP mode, SSID/security).
-      See `pi_side_reference.md` open items 1 and 3. Also set the real `CONFIG_HALOW_COUNTRY_CODE`
-      (currently placeholder `"??"`) and confirm/adjust the `CONFIG_MM_*` pin/BCF config against
-      the physical board before flashing - neither has been checked against real hardware.
+      See `pi_side_reference.md` open items 1 and 3. `CONFIG_HALOW_COUNTRY_CODE` now defaults to
+      `"US"` for local builds, but it still has to *match the Pi* - flash the matching region
+      build. The `CONFIG_MM_*` pin/BCF config is a verbatim copy of the component's own
+      `seeed_xiao_esp32s3-seeed_xiao_mm6108` config (see `HARDWARE.md`) and matches the confirmed
+      hardware, but has still never been run against a physical board - `gwcfg-radio` is the check.
 - [ ] **Step 1** - HaLow STA association works against that config. Code compiles and should be
-      structurally correct (see items 8/9 above); unverified on real hardware.
+      structurally correct (see items 8/9 above); unverified on real hardware. The status panel /
+      `gwcfg-status` now distinguish this from step 2 explicitly (`searching` vs.
+      `associated, no lease`); `gwcfg-scan` says whether the AP is even audible first.
 - [ ] **Step 2** - DHCP lease + reachability confirmed (ping a Pi node; confirm the lease is
       visible from the Pi side). Blocked on step 1.
 - [ ] **Step 3** - Local SoftAP + DHCP validated standalone (phones can join, get a lease). The
       natural first hardware test - doesn't depend on steps 0-2 at all.
 - [ ] **Step 4** - NAPT validated (phone gets outbound mesh/internet reach). Needs a working
       uplink (steps 1-2) to test for real. Confirm translated source addresses actually appear on
-      the mesh side - NAPT was on the wrong netif until the review pass, and the failure mode is
-      "associates fine, no connectivity."
+      the mesh side - NAPT was on the wrong netif until the first review pass, and the failure mode
+      is "associates fine, no connectivity."
+      **Test name resolution separately from IP reachability**: DNS propagation into the SoftAP's
+      DHCP offers was missing until this pass, and the two fail independently. A client that joined
+      *before* the uplink came up holds a DNS-less lease until it renews - rejoin before concluding
+      anything.
 - [ ] **Step 4a** - **Plain multicast over HaLow validated, before involving the relay.** Confirm
       an IGMP join on the Morse Micro interface actually receives group traffic, and that the
       Pi-side mesh forwards 239.2.3.1 at all. Multicast over mesh routing is a classic silent-drop
@@ -199,15 +284,17 @@ changes.
 - [ ] **Step 6** - Provisioning/config UX pass. Serial console (`gwcfg-*`) and an on-device web UI
       (`main/web_ui.c`, connect to the SoftAP and browse to its IP) both exist now, compile clean,
       neither flashed/tested on hardware yet. No captive-portal DNS redirect (visiting *any* URL
-      auto-opens the config page) - user has to know to browse to the device's IP.
-      **The web UI's status panel is the intended bring-up instrument for steps 1-5**: it reports
-      uplink up/down, the DHCP-leased uplink IP, SoftAP client count, whether the CoT relay
-      actually started, uptime, free heap, and the baked-in country code - i.e. most of what these
-      steps are trying to establish, without needing a serial cable attached.
+      auto-opens the config page) - user has to know to browse to the device's IP. See
+      [`FEATURES.md`](FEATURES.md) item 5.
+      **The web UI's status panel is the intended bring-up instrument for steps 1-5**: link state
+      (in words, not a boolean), uplink RSSI, the DHCP-leased uplink IP, SoftAP client count,
+      whether the CoT relay actually started, uptime, free heap, and the baked-in country code -
+      plus a HaLow scan button and a device-log view. The LED covers the same states when there's
+      no phone attached either.
 - [ ] **Step 7** - Web UI authentication. Blocks shipping and blocks OTA update delivery. Design
       is settled (forced password change on first use, challenge-response so the password never
       crosses the wire, serial-console recovery) - see `TECHNICAL_REVIEW.md` "Deferred: web UI
-      authentication". Not started.
+      authentication" and [`FEATURES.md`](FEATURES.md) item 1. Not started.
 
 ## Open questions
 
@@ -265,18 +352,21 @@ fails the job on disagreement.
 
 ## Known v1 limitations (intentional, not bugs)
 
-- `app_main.c`'s `on_uplink_state()` only initializes NAT/CoT relay on the **first** uplink
-  connect. If a later reconnect gets a different DHCP-leased IP, they are not re-initialized
+- `app_main.c`'s `on_uplink_state()` only initializes NAT/CoT relay on the **first successful**
+  uplink connect. If a later reconnect gets a different DHCP-leased IP, they are not re-initialized
   against it. Documented in a comment there; fine for v1, worth revisiting if lease changes turn
-  out to happen in practice.
+  out to happen in practice. (A *failed* init does now retry on the next reconnect - that was a
+  bug, fixed in the readiness pass, and is a different thing from the lease-change limitation.)
 - No inbound-unicast-to-a-specific-phone routing (NAT-only for v1, per `DESIGN.md` §4.3). Static
   routing on the gateway Pi is the suggested v2 fix if needed.
 - No self-beacon (GPS/battery/status CoT) yet - `cot_relay_inject()` exists as the generic
   send primitive `DESIGN.md` §5.5 asks for, but nothing calls it yet.
 - The `CONFIG_MM_BCF_FILE`/pin config was copied from the component's reference config for this
-  exact board pairing (Seeed XIAO ESP32S3 + Seeed XIAO WM6108) and never checked against a
-  physical board - if the real hardware differs even slightly (different HaLow HAT, different
-  wiring), this needs regenerating from `managed_components/morsemicro__halow/configs/`.
+  exact board pairing (Seeed XIAO ESP32S3 + Seeed XIAO WM6108 - the hardware in use, confirmed)
+  and never checked against a physical board - if the real hardware differs even slightly
+  (different HaLow HAT, different wiring), this needs regenerating from
+  `managed_components/morsemicro__halow/configs/`. `gwcfg-radio` is the one-command check; see
+  [`HARDWARE.md`](HARDWARE.md) for the full pin table and its provenance.
 - The web UI (`main/web_ui.c`) has no authentication - anyone who can join the SoftAP (i.e. who
   knows its password) can reconfigure the gateway. Acceptable for v1 given the SoftAP itself
   already requires a password by default, but worth revisiting if that's not enough isolation for
@@ -288,6 +378,7 @@ fails the job on disagreement.
   performs updates, so firmware changes still need a USB cable in practice. Blocked on web UI
   authentication by choice, not by effort - see [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md)
   "Deferred: OTA" for the ordered list of what has to land.
-- The DHCP-failure recovery path re-calls `mmhalow_connect()` rather than doing a true radio-level
-  disconnect first - no `mmhalow_disconnect()` could be confirmed against the real component
-  headers. Confirm during bring-up whether a cleaner API exists.
+- ~~The DHCP-failure recovery path re-calls `mmhalow_connect()` rather than doing a true
+  radio-level disconnect first.~~ **Resolved.** `mmhalow_disconnect()` does exist in the
+  component's public `mmhalow.h` (implemented as `mmwlan_sta_disable()`); the recovery path now
+  disconnects before re-associating.

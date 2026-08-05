@@ -6,9 +6,12 @@
 
 #include "cot_relay.h"
 #include "downlink_softap.h"
+#include "factory_reset.h"
 #include "gw_config.h"
 #include "ip_forward_nat.h"
+#include "log_buffer.h"
 #include "provisioning.h"
+#include "status_led.h"
 #include "uplink_halow.h"
 #include "web_ui.h"
 
@@ -18,52 +21,90 @@ static const char *TAG = "app_main";
  * state callback fires from a different task after app_main() has
  * returned. */
 static gw_config_t s_cfg;
-static bool s_uplink_ever_connected = false;
+static bool s_datapath_up = false;
 
 /* Brings up NAT + the CoT relay the first time the HaLow uplink gets an IP.
+ *
  * Known v1 limitation: if a later reconnect gets a *different* IP, NAT/CoT
  * relay aren't re-initialized against it - see DESIGN.md §4.3 for the
- * NAT-vs-route tradeoff this is part of. */
+ * NAT-vs-route tradeoff this is part of.
+ *
+ * The "did this already" flag is set only once both pieces actually succeeded.
+ * Setting it on entry (as this used to) meant a single transient failure - the
+ * SoftAP netif momentarily without an address, say - permanently disabled the
+ * datapath until someone power-cycled the node, because no later reconnect
+ * would ever try again. */
 static void on_uplink_state(bool connected, void *ctx)
 {
     gw_config_t *cfg = (gw_config_t *)ctx;
 
-    if (!connected || s_uplink_ever_connected) {
+    if (!connected || s_datapath_up) {
         return;
     }
-    s_uplink_ever_connected = true;
 
     esp_netif_t *uplink_netif = uplink_halow_get_netif();
     esp_netif_t *softap_netif = downlink_softap_get_netif();
 
-    /* NAPT goes on the SoftAP side, default route on the uplink - see
+    /* NAPT goes on the SoftAP side, default route on the uplink, and the
+     * uplink's DNS server is copied into the SoftAP's DHCP offers - see
      * ip_forward_nat.h for why that direction is not the intuitive one. */
-    esp_err_t err = ip_forward_nat_init(softap_netif, uplink_netif);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "NAT init failed: %s", esp_err_to_name(err));
+    esp_err_t nat_err = ip_forward_nat_init(softap_netif, uplink_netif);
+    if (nat_err != ESP_OK) {
+        ESP_LOGE(TAG, "NAT init failed: %s", esp_err_to_name(nat_err));
     }
 
     provisioning_config_lock();
     gw_cot_config_t cot = cfg->cot;
     provisioning_config_unlock();
 
-    err = cot_relay_start(uplink_netif, softap_netif, &cot);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "CoT relay start failed: %s", esp_err_to_name(err));
+    esp_err_t cot_err = cot_relay_start(uplink_netif, softap_netif, &cot);
+    if (cot_err == ESP_ERR_INVALID_STATE) {
+        cot_err = ESP_OK; /* already running from an earlier attempt */
+    } else if (cot_err != ESP_OK) {
+        ESP_LOGE(TAG, "CoT relay start failed: %s", esp_err_to_name(cot_err));
+    }
+
+    if (nat_err == ESP_OK && cot_err == ESP_OK) {
+        s_datapath_up = true;
+    } else {
+        ESP_LOGW(TAG, "datapath is incomplete - will retry on the next uplink reconnect");
     }
 }
 
 void app_main(void)
 {
+    /* First, so the ring captures boot logs too - the ones that say whether
+     * the radio came up are the ones you most want to read back later. */
+    esp_err_t err = log_buffer_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "log buffer init failed: %s", esp_err_to_name(err));
+    }
+
     ESP_ERROR_CHECK(provisioning_init());
     provisioning_load(&s_cfg);
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
+    /* Started before the radio: until uplink_halow_init() runs, the link state
+     * reads as RADIO_FAILED, so the LED shows "not up yet" from the first
+     * moment there's power rather than staying dark through bring-up. */
+    err = status_led_start();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "status LED start failed: %s", esp_err_to_name(err));
+    }
+
+    /* The config-recovery escape hatch. Started early and independently of
+     * everything below so it still works when the SoftAP or the radio doesn't
+     * - which is exactly when it's needed. */
+    err = factory_reset_start(&s_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset watcher failed to start: %s", esp_err_to_name(err));
+    }
+
     /* SoftAP first: it doesn't depend on the uplink and should be usable
      * standalone (DESIGN.md §8 build order, step 3). */
-    esp_err_t err = downlink_softap_init(&s_cfg.softap);
+    err = downlink_softap_init(&s_cfg.softap);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "SoftAP bring-up failed: %s", esp_err_to_name(err));
     }
@@ -92,12 +133,22 @@ void app_main(void)
 
     err = uplink_halow_init(&uplink_cfg);
     if (err != ESP_OK) {
+        /* Deliberately *not* followed by uplink_halow_start(). A reconnect
+         * loop against a radio that never initialized just spins, and its
+         * error log every second buries the line above that says why. The
+         * node stays useful in this state: SoftAP, web UI (whose status panel
+         * reports "radio failed") and console all still work, which is what
+         * you want when the cause is a wiring or BCF mismatch you're about to
+         * go and fix. */
         ESP_LOGE(TAG, "HaLow uplink init failed: %s", esp_err_to_name(err));
-    }
-    uplink_halow_set_state_callback(on_uplink_state, &s_cfg);
-    err = uplink_halow_start();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "failed to start HaLow reconnect task: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "the radio is unavailable - check the CONFIG_MM_* pin/BCF config against "
+                      "the board (design/HARDWARE.md); SoftAP and config UI remain up");
+    } else {
+        uplink_halow_set_state_callback(on_uplink_state, &s_cfg);
+        err = uplink_halow_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "failed to start HaLow reconnect task: %s", esp_err_to_name(err));
+        }
     }
 
     ESP_LOGI(TAG, "xiao-halow-gateway up: node_id=%s", s_cfg.node_id);

@@ -10,6 +10,19 @@ extern "C" {
 /* Sets up address translation so SoftAP clients reach the mesh through the
  * HaLow uplink (DESIGN.md §4.3, v1 NAT-for-general-traffic recommendation).
  *
+ * Three things happen here, and all three are required for a client behind the
+ * SoftAP to have working connectivity:
+ *
+ *   1. the DNS server the uplink learned over DHCP is copied into the SoftAP's
+ *      DHCP server so local clients are offered a resolver (lwIP's DHCP server
+ *      offers none by default - see propagate_dns() in the .c for the exact
+ *      upstream citation);
+ *   2. the uplink is made the default route;
+ *   3. NAPT is enabled on the downlink.
+ *
+ * Steps 2 and 3 alone produce a gateway where raw IP works and every hostname
+ * lookup fails - which presents as "NAT is broken".
+ *
  * NAPT is enabled on the *downlink* (SoftAP) netif and the *uplink* netif is
  * made the default route. That direction is deliberate and matches ESP-IDF's
  * own softap_sta NAT-router example: esp_netif's NAPT control sets the napt

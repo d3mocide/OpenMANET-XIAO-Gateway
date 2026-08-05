@@ -5,6 +5,7 @@
 #include "web_ui.h"
 
 #include "cot_relay.h"
+#include "log_buffer.h"
 #include "provisioning.h"
 #include "uplink_halow.h"
 
@@ -29,6 +30,12 @@ extern const char web_ui_html_end[] asm("_binary_web_ui_html_end");
 /* Long enough for the JSON response to be written to the socket and read by
  * the browser before the CPU resets underneath it. */
 #define REBOOT_DELAY_US 500000
+
+/* A HaLow scan sweeps every channel in the regulatory domain and dwells on
+ * each, so it is measured in seconds, not milliseconds. This bound has to sit
+ * below the socket timeouts set in web_ui_start() or the browser gives up
+ * before the handler answers. */
+#define WEB_UI_SCAN_TIMEOUT_MS 8000
 
 /* Live in-RAM config, shared with the console (provisioning.c) and app_main.c.
  * All access goes through provisioning_config_lock(). */
@@ -209,6 +216,26 @@ static esp_err_t status_get_handler(httpd_req_t *req)
      * same distinction ip_event_handler() draws, and the one that actually
      * determines whether NAT and the relay could start. */
     cJSON_AddBoolToObject(uplink, "connected", uplink_halow_is_connected());
+
+    /* "state" is the finer-grained version, and the one that makes this panel
+     * a bring-up instrument rather than a health light: "searching" and
+     * "associated, no lease" are DESIGN.md §8 steps 1 and 2 failing
+     * respectively, with entirely different causes (RF/country/credentials vs.
+     * DHCP on the Pi). A single boolean cannot tell them apart. */
+    uplink_link_state_t link_state = uplink_halow_get_link_state();
+    cJSON_AddStringToObject(uplink, "state", uplink_halow_link_state_name(link_state));
+    cJSON_AddBoolToObject(uplink, "associated", link_state >= UPLINK_LINK_ASSOCIATED);
+    cJSON_AddBoolToObject(uplink, "radio_ready", uplink_halow_is_ready());
+
+    /* Null rather than a sentinel number when unknown, so the page can render
+     * "-" instead of a misleading -2147483648. */
+    int32_t rssi = uplink_halow_get_rssi();
+    if (rssi == INT32_MIN) {
+        cJSON_AddNullToObject(uplink, "rssi");
+    } else {
+        cJSON_AddNumberToObject(uplink, "rssi", rssi);
+    }
+
     add_netif_ip(uplink, "ip", uplink_halow_get_netif());
 
     cJSON *softap = cJSON_AddObjectToObject(root, "softap");
@@ -372,6 +399,118 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"status\":\"saved\"}");
 }
 
+/* Serves the in-RAM log ring as plain text, newest content last.
+ *
+ * Read-only and SoftAP-gated like everything else. Note the logs may contain
+ * SSIDs and IP addresses but never passphrases - nothing in this firmware logs
+ * one, and that must stay true. */
+static esp_err_t log_get_handler(httpd_req_t *req)
+{
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
+    size_t cap = log_buffer_capacity() + 1;
+    char *buf = malloc(cap);
+    if (buf == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    size_t len = log_buffer_read(buf, cap);
+    httpd_resp_set_type(req, "text/plain");
+    esp_err_t err = httpd_resp_send(req, buf, len);
+    free(buf);
+    return err;
+}
+
+static void scan_result_cb(const uplink_scan_result_t *result, void *ctx)
+{
+    cJSON *array = (cJSON *)ctx;
+
+    cJSON *item = cJSON_CreateObject();
+    if (item == NULL) {
+        return;
+    }
+    cJSON_AddStringToObject(item, "ssid", result->ssid);
+    char bssid[18];
+    snprintf(bssid, sizeof(bssid), "%02x:%02x:%02x:%02x:%02x:%02x", result->bssid[0],
+             result->bssid[1], result->bssid[2], result->bssid[3], result->bssid[4],
+             result->bssid[5]);
+    cJSON_AddStringToObject(item, "bssid", bssid);
+    cJSON_AddNumberToObject(item, "rssi", result->rssi);
+    /* kHz as a whole number, not MHz as a fraction: cJSON prints
+     * integer-valued numbers with %d and everything else with %g, and %g is
+     * one `CONFIG_LIBC_NEWLIB_NANO_FORMAT=y` away from emitting malformed
+     * JSON. The page divides for display. */
+    cJSON_AddNumberToObject(item, "freq_khz", (double)(result->freq_hz / 1000u));
+    cJSON_AddNumberToObject(item, "bw_mhz", result->bw_mhz);
+    cJSON_AddItemToArray(array, item);
+}
+
+/* Runs a HaLow scan and returns what it found.
+ *
+ * This is the endpoint that answers "is the Pi's AP even there?" without a
+ * serial cable or a Pi-side capture. Two things worth knowing about the
+ * result, both surfaced in the page's help text:
+ *
+ *  - it only covers channels legal in this build's CONFIG_HALOW_COUNTRY_CODE,
+ *    so an empty list is evidence about the region setting as much as about
+ *    the AP;
+ *  - scanning briefly takes the radio away from the uplink, so a connected
+ *    node may drop and re-associate afterwards. That's acceptable for a
+ *    deliberate operator action, and the reconnect loop handles it.
+ */
+static esp_err_t scan_post_handler(httpd_req_t *req)
+{
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
+    /* esp_http_server's httpd_err_code_t has no 503 or 409 (the enum stops at
+     * 431 and omits both), so these use 500 with a specific message rather
+     * than a status code the browser could act on. The message is what the
+     * page surfaces to the operator, and it's the part that matters here. */
+    if (!uplink_halow_is_ready()) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "the HaLow radio isn't initialized - nothing to scan with");
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *array = root ? cJSON_AddArrayToObject(root, "aps") : NULL;
+    if (array == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    esp_err_t scan_err = uplink_halow_scan(scan_result_cb, array, WEB_UI_SCAN_TIMEOUT_MS);
+    if (scan_err == ESP_ERR_INVALID_STATE) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "a scan is already running");
+        return ESP_FAIL;
+    }
+
+    /* A timeout still delivers whatever was found before the deadline, so it's
+     * reported as a partial success rather than an error - partial scan
+     * results are exactly as useful as complete ones here. */
+    cJSON_AddBoolToObject(root, "complete", scan_err == ESP_OK);
+    cJSON_AddStringToObject(root, "country", CONFIG_HALOW_COUNTRY_CODE);
+
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (out == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, out);
+    free(out);
+    return err;
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -425,6 +564,16 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
+    /* The scan handler blocks for up to WEB_UI_SCAN_TIMEOUT_MS; the default
+     * 5s socket timeouts would abort the connection before it can answer. */
+    config.recv_wait_timeout = 15;
+    config.send_wait_timeout = 15;
+    /* Default is 8 and there are 7 routes below - raised so adding one doesn't
+     * fail registration at runtime instead of at compile time. */
+    config.max_uri_handlers = 12;
+    /* The scan handler builds a cJSON array on this task's stack frame chain
+     * on top of the default 4KB. */
+    config.stack_size = 6144;
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &config);
@@ -438,6 +587,8 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
         { .uri = "/api/status", .method = HTTP_GET, .handler = status_get_handler },
         { .uri = "/api/config", .method = HTTP_GET, .handler = config_get_handler },
         { .uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler },
+        { .uri = "/api/log", .method = HTTP_GET, .handler = log_get_handler },
+        { .uri = "/api/scan", .method = HTTP_POST, .handler = scan_post_handler },
         { .uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler },
     };
 

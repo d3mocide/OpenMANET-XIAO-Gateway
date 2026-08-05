@@ -1,0 +1,96 @@
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "status_led.h"
+
+#include "board.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "uplink_halow.h"
+
+static const char *TAG = "status_led";
+
+/* One tick per pattern slot. 125ms gives a slow blink of 1Hz over an 8-slot
+ * pattern while still being fast enough for a triple-blink to read as one. */
+#define TICK_MS       125
+#define PATTERN_SLOTS 8
+
+static volatile bool s_attention = false;
+
+/* Bit per slot, LSB first: 1 = LED on. Indexed by uplink_link_state_t via
+ * designated initializers, so the mapping stays readable as states are added;
+ * the task bounds-checks the index and falls back to the "searching" pattern
+ * rather than reading past the end if a new state arrives without one. */
+static const uint8_t s_patterns[] = {
+    [UPLINK_LINK_RADIO_FAILED] = 0b00010101, /* fast triple-blink: nothing works */
+    [UPLINK_LINK_DOWN]         = 0b00001111, /* slow 1Hz blink: searching */
+    [UPLINK_LINK_ASSOCIATING]  = 0b00001111, /* same - it's still searching */
+    [UPLINK_LINK_ASSOCIATED]   = 0b00000101, /* double-blink: no DHCP lease yet */
+    [UPLINK_LINK_UP]           = 0b11111111, /* solid: usable */
+};
+
+/* Steady fast blink, distinct from every link-state pattern above. */
+#define ATTENTION_PATTERN 0b01010101
+
+static void led_write(bool on)
+{
+#if BOARD_STATUS_LED_ACTIVE_LOW
+    gpio_set_level(BOARD_STATUS_LED_GPIO, on ? 0 : 1);
+#else
+    gpio_set_level(BOARD_STATUS_LED_GPIO, on ? 1 : 0);
+#endif
+}
+
+static void status_led_task(void *arg)
+{
+    (void)arg;
+    uint8_t slot = 0;
+
+    for (;;) {
+        uint8_t pattern;
+        if (s_attention) {
+            pattern = ATTENTION_PATTERN;
+        } else {
+            uplink_link_state_t state = uplink_halow_get_link_state();
+            pattern = ((size_t)state < sizeof(s_patterns) / sizeof(s_patterns[0]))
+                          ? s_patterns[state]
+                          : s_patterns[UPLINK_LINK_DOWN];
+        }
+
+        led_write((pattern >> slot) & 1u);
+        slot = (slot + 1) % PATTERN_SLOTS;
+        vTaskDelay(pdMS_TO_TICKS(TICK_MS));
+    }
+}
+
+esp_err_t status_led_start(void)
+{
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << BOARD_STATUS_LED_GPIO,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&io);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "gpio_config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    led_write(false);
+
+    /* Small stack: the task only reads an enum and toggles a pin. */
+    if (xTaskCreate(status_led_task, "status_led", 2048, NULL, 2, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "status LED on GPIO%d", BOARD_STATUS_LED_GPIO);
+    return ESP_OK;
+}
+
+void status_led_set_attention(bool on)
+{
+    s_attention = on;
+}
