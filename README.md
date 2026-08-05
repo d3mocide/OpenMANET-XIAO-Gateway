@@ -18,17 +18,21 @@ you're picking this project back up.
 
 ## Status
 
-Initial firmware skeleton per `docs/DESIGN.md` §7/§8. Structurally complete, but two things are
-not yet real (see `docs/PROGRESS.md` for the full checklist):
+`idf.py build` passes end-to-end against ESP-IDF v5.5.1 and the real `morsemicro/halow`
+component (verified in CI-less form by actually running the build, not just reading code -
+see `docs/PROGRESS.md` for the full list of what that surfaced and fixed: console peripheral,
+IDF version floor, the real HaLow security enum, board pin/BCF/chip config, partition size).
+**Not yet done, and real-hardware-only from here:**
 
-- **HaLow STA uplink** (`main/uplink_halow.c`): the actual `morsemicro/halow` component calls
-  are stubbed out (clean-compiling, return `ESP_ERR_NOT_SUPPORTED`) rather than guessed against
-  unverified headers — see the comment block at the top of that file for what's expected once
-  wired up. Everything downstream (reconnect/backoff, NAT, CoT relay, SoftAP) is written to
-  degrade gracefully while this is stubbed, so it can all be bench-tested without HaLow hardware.
-- **Pi-side HaLow AP config** (SSID/security mode/channel) is unconfirmed — see
+- **Pi-side HaLow AP config** (SSID/security mode) is unconfirmed — see
   `docs/pi_side_reference.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
   defaults (see `gwcfg-*` console commands below).
+- **`CONFIG_HALOW_COUNTRY_CODE`** in `sdkconfig.defaults` is still the placeholder `"??"` - must
+  be set to a real ISO 3166-1 country code before flashing, or the radio won't come up. This is a
+  build-time Kconfig value, not something `gwcfg-*` can set at runtime.
+- Nothing has been flashed or run on physical hardware - a compiling build isn't a working
+  radio link. Association/DHCP/NAT/CoT-relay behavior on real Pi + XIAO hardware is still
+  unverified (`docs/DESIGN.md` §8 steps 0-5).
 
 ## Building
 
@@ -53,11 +57,15 @@ the serial console (`idf.py monitor`) and use:
 
 ```
 xiao-gw> gwcfg-show
-xiao-gw> gwcfg-set-uplink <ssid> <psk|-> <open|psk|sae> [channel]
+xiao-gw> gwcfg-set-uplink <ssid> <psk|-> <open|owe|sae>
 xiao-gw> gwcfg-set-softap <ssid> <psk|-> [channel]
 xiao-gw> gwcfg-set-node <node_id>
 xiao-gw> gwcfg-save
 ```
+
+(HaLow has no WPA2-PSK mode - only open, OWE, or SAE. There's no uplink channel option either:
+HaLow picks a channel from the regulatory domain set by `CONFIG_HALOW_COUNTRY_CODE`, a build-time
+Kconfig value, not something set here.)
 
 Reboot after `gwcfg-save` for uplink/SoftAP changes to take effect.
 
@@ -68,10 +76,11 @@ main/
 ├── app_main.c          entrypoint: wires everything below together
 ├── gw_config.h          shared config structs (uplink/softap/CoT/node)
 ├── provisioning.c       NVS-backed config load/save + gwcfg-* console commands
-├── uplink_halow.c       HaLow STA uplink, reconnect/backoff (component integration stubbed)
+├── uplink_halow.c       HaLow STA uplink via morsemicro/halow, reconnect/backoff
 ├── downlink_softap.c    local 2.4GHz SoftAP + DHCP for phones/tablets/ATAK devices
 ├── ip_forward_nat.c     NAPT between the uplink and SoftAP netifs
 └── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
+partitions.csv           custom 2MB app partition (default 1MB is too small for this build)
 docs/
 ├── DESIGN.md            full design document
 ├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link

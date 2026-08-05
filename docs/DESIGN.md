@@ -117,6 +117,10 @@ radios the way batman-adv does).
 - Security: match whatever the Pi's HaLow AP is configured for (open / WPA2-PSK / WPA3-SAE) —
   the new `morsemicro/halow` component supports SAE, so this isn't a capability gap, just a
   config value to confirm against the real node.
+  **Correction (verified against the real morsemicro/halow SDK source, not just its docs):**
+  HaLow (802.11ah) has no WPA2-PSK mode at all - `enum mmwlan_security_type` in the SDK's
+  `mmwlan.h` only defines `MMWLAN_OPEN`, `MMWLAN_OWE`, and `MMWLAN_SAE`. The real option set for
+  §6.3 is **open / OWE / SAE**, not WPA2-PSK - see `docs/pi_side_reference.md`.
 
 ### 4.2 Downlink (XIAO → phones)
 
@@ -183,8 +187,9 @@ runs) aren't fully readable through GitHub's web UI at the depth needed:
    (backbone) *and* AP (for XIAO nodes) concurrently on one radio, or would XIAO nodes always
    pair to a specific, single Pi? Worth checking mac80211 vif-combination support at that point —
    doesn't block a first single-Pi build.
-3. **What security mode does the Pi's HaLow AP run** (open/PSK/SAE) — just need the real value
-   from the node's `/etc/config/wireless`.
+3. **What security mode does the Pi's HaLow AP run** (open/PSK/SAE — **corrected: the real
+   XIAO-side option set is open/OWE/SAE, not PSK; see §4.1 note above**) — just need the real
+   value from the node's `/etc/config/wireless`.
 4. **DHCP scope/lease behavior**: does the Pi the XIAO associates to run the DHCP server itself,
    or does `openmanetd` centralize it elsewhere (relevant once multiple Pi nodes are involved)?
 5. **Regulatory/channel config** the Pi's HaLow radio uses (`morse-regdb` country/channel plan),

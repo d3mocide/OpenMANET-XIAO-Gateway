@@ -34,21 +34,31 @@ items below gets confirmed against a real node.
 
 ## Still needs 5 minutes on a real node
 
-None of these block a single-Pi + single-XIAO v1 build — `uplink_halow.c`
-is written to take these as provisioned config (NVS), not hardcoded
-values, specifically so firmware work isn't blocked on this. Check with
-`uci show wireless`, `iw dev`, `batctl if` on the Pi:
+None of these block a single-Pi + single-XIAO v1 *build* — items 1, 2, and
+4 are handled as provisioned config (NVS) on the XIAO side, not hardcoded.
+Item 3 is the exception (see below): it's a build-time setting, so it does
+need a real answer before the XIAO can actually associate, even though it
+doesn't block compiling. Check with `uci show wireless`, `iw dev`,
+`batctl if` on the Pi:
 
-1. **Security mode** the Pi's HaLow AP runs (open / WPA2-PSK / WPA3-SAE) —
-   `gwcfg-set-uplink` on the XIAO needs to match whatever the real value
-   is. `morsemicro/halow` supports SAE, so this is a config value, not a
-   capability gap.
+1. **Security mode** the Pi's HaLow AP runs. **Corrected from the original
+   draft** (verified against the real `morsemicro/halow` SDK source, not
+   just its docs): HaLow has no WPA2-PSK mode - the real option set is
+   **open / OWE / SAE** (`enum mmwlan_security_type` in the SDK's
+   `mmwlan.h`), not WPA2-PSK. `gwcfg-set-uplink` on the XIAO takes
+   `open|owe|sae` and needs to match whatever the Pi's AP actually runs.
 2. **DHCP scope/lease behavior**: does the Pi the XIAO associates to run
    the DHCP server itself, or does `openmanetd` centralize it elsewhere?
    Matters once multiple Pi nodes are in play.
-3. **Regulatory/channel plan** (`morse-regdb` country/channel) the Pi's
-   HaLow radio uses, so the XIAO's STA config matches instead of scanning
-   blind.
+3. **Regulatory/country code** (`morse-regdb`) the Pi's HaLow radio uses.
+   **Unlike items 1/2/4, this is not NVS-provisioned on the XIAO side** -
+   confirmed by reading `mmhalow_init()` in the real SDK: there's no
+   per-connection channel argument in the STA connect API at all: the
+   country code is a *build-time* Kconfig value
+   (`CONFIG_HALOW_COUNTRY_CODE` in `sdkconfig.defaults`, currently the
+   placeholder `"??"`) that determines the STA's legal channel list before
+   it ever scans. Must be set to match the Pi's regulatory domain and
+   rebuilt/reflashed - `gwcfg-*` can't fix a wrong value at runtime.
 4. **Once a second Pi joins the mesh**: does a Pi's HaLow radio need to run
    mesh-point (backbone) *and* AP (for XIAO nodes) concurrently on one
    radio (mac80211 multi-vif), or does each XIAO always pair to one
