@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "esp_err.h"
@@ -27,6 +28,13 @@ esp_err_t cot_relay_start(esp_netif_t *netif_a, esp_netif_t *netif_b, const gw_c
  * needing separate code. Not yet called anywhere; no self-beacon exists
  * yet. */
 esp_err_t cot_relay_inject(const void *data, size_t len);
+
+/* True once cot_relay_start() has succeeded and the relay socket is live.
+ * Surfaced in the web UI's /api/status because "did the relay actually come
+ * up?" is otherwise invisible without a serial console - it only starts
+ * after the uplink gets a DHCP lease, so a false here is a normal state
+ * early in boot, not necessarily a fault. */
+bool cot_relay_is_running(void);
 
 #ifdef __cplusplus
 }

@@ -314,6 +314,62 @@ This has been added to the build-order checklist in `PROGRESS.md` as step 4a.
 
 ---
 
+## Deferred: web UI authentication
+
+**Status: designed, not built.** Decisions recorded here so the next pass doesn't relitigate them.
+
+Finding 4 restored the intended boundary (SoftAP clients only) but did not add authentication -
+association with the SoftAP is still the only credential. That is acceptable for bench testing and
+is *not* acceptable for shipping, and it blocks OTA update delivery outright: an upload endpoint
+without auth means anyone who can reach the UI can replace the firmware.
+
+### No hardcoded default password
+
+Shipping a fixed default is both bad practice and, for a device sold or distributed, likely
+non-compliant: California SB-327 and the UK PSTI Act each require either a unique per-device
+credential or a forced change at setup. This board has no screen and no per-unit labelling step,
+so per-device randomness can't be communicated to the user.
+
+**Decision: forced change on first use.** Ship with a known default, and refuse to serve anything
+except the "set a password" screen until it has been changed. The admin password must be
+changeable at any time thereafter, exactly like the Wi-Fi passphrase.
+
+### No TLS
+
+No CA will issue a certificate for `192.168.50.1`, and a self-signed certificate trains users to
+click through browser warnings - which is worse than no TLS, because it erodes the one signal that
+matters elsewhere. TLS also costs RAM on a device already running NAT and the CoT relay.
+
+**Decision: no TLS.** WPA2 on the SoftAP is the transport protection.
+
+### The password still must not cross the wire in cleartext
+
+With WPA2-PSK, anyone who knows the AP passphrase can decrypt other clients' traffic. So a
+form-posted password is exposed to everyone who can already join the AP - which matters here,
+because a team may share the Wi-Fi passphrase without every member being an administrator.
+
+**Decision: challenge-response.** Server issues a nonce; the client returns
+`HMAC(stored_key, nonce)`; the password itself never transits.
+
+**Constraint that shapes the implementation:** `crypto.subtle` is only exposed in *secure
+contexts*, and `http://192.168.50.1` is not one (only `localhost` is treated as trustworthy over
+plain HTTP). WebCrypto is therefore unavailable and a small SHA-256/HMAC implementation must be
+bundled into the embedded page - roughly 2KB. This was accepted deliberately; do not "simplify" it
+back to `crypto.subtle` later, it will silently be `undefined` on the device.
+
+### Remaining design points
+
+- **Storage:** PBKDF2-HMAC-SHA256 with a per-device random salt in NVS (mbedtls is already
+  linked). Never store the password itself. Tune iteration count against the S3 - logins are rare,
+  so err high.
+- **Sessions:** `esp_random()` tokens held in RAM only (they should not survive a reboot), a small
+  fixed-size session table, idle timeout, `HttpOnly` + `SameSite=Strict` cookies for CSRF.
+- **Brute force:** lockout or backoff after repeated failures - the attacker here is already on
+  the LAN.
+- **Recovery is mandatory.** A forgotten password must not brick a unit. The serial console is the
+  escape hatch (`gwcfg-reset-auth`), which is physically-present-only and therefore the right
+  trust model. Document it prominently; an undocumented recovery path is the same as none.
+
 ## Not changed, and why
 
 - **No captive-portal DNS redirect.** Still a real UX gap (users must know to browse to the
