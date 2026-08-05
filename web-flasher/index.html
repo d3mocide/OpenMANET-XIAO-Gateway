@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XIAO HaLow Gateway — Web Flasher</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 34rem; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; line-height: 1.5; }
+  h1 { font-size: 1.4rem; }
+  esp-web-install-button { display: block; margin: 1.5rem 0; }
+  ol, ul { padding-left: 1.2rem; }
+  code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 4px; }
+  .note { background: #fff8e1; border: 1px solid #f0d878; border-radius: 6px; padding: 0.8rem 1rem; margin: 1rem 0; }
+  .unsupported { display: none; }
+</style>
+</head>
+<body>
+<h1>XIAO HaLow Gateway — Web Flasher</h1>
+<p>
+  Flashes the <a href="https://github.com/d3mocide/OpenMANET-S3-Client">OpenMANET-S3-Client</a>
+  firmware onto a Seeed XIAO ESP32-S3 + Wio-WM6180 (HaLow) node. Works in Chrome/Edge over USB -
+  no software to install.
+</p>
+
+<div class="note">
+  This flashes firmware with <strong>placeholder configuration</strong> (open HaLow uplink,
+  default local Wi-Fi credentials). See "After flashing" below to set your real values - nothing
+  here bakes in your Wi-Fi/HaLow credentials, they're entered later over the device's own local
+  network, not typed into this page.
+</div>
+
+<esp-web-install-button manifest="./manifest.json">
+  <button slot="activate">Connect &amp; Flash</button>
+  <span slot="unsupported" class="unsupported">
+    Your browser doesn't support Web Serial. Use Chrome or Edge on desktop.
+  </span>
+  <span slot="not-allowed" class="unsupported">
+    Web Serial is only available over HTTPS (this page should already be HTTPS via GitHub Pages).
+  </span>
+</esp-web-install-button>
+
+<h2>Before flashing</h2>
+<ol>
+  <li>Plug the XIAO ESP32-S3 in via USB-C.</li>
+  <li>Click "Connect &amp; Flash" above and pick the device's serial port when your browser asks.</li>
+</ol>
+
+<h2>After flashing</h2>
+<ol>
+  <li>The device boots and starts its own Wi-Fi access point (default SSID <code>xiao-gateway</code>,
+      password <code>openmanet</code> - see the firmware's
+      <a href="https://github.com/d3mocide/OpenMANET-S3-Client/blob/main/main/provisioning.c">defaults</a>
+      if these have changed).</li>
+  <li>Connect your laptop or phone to that Wi-Fi network.</li>
+  <li>Browse to <code>http://192.168.50.1/</code> - the on-device config page.</li>
+  <li>Set the real HaLow uplink SSID/security/passphrase (open/OWE/SAE only - see the
+      <a href="https://github.com/d3mocide/OpenMANET-S3-Client/blob/main/docs/pi_side_reference.md">Pi-side reference</a>
+      for what the mesh Pi expects) and your own local Wi-Fi SSID/password, then Save and Reboot.</li>
+</ol>
+
+<h2>Regulatory/country code</h2>
+<p>
+  The HaLow radio's legal channel list is set at build time, not from this page or the on-device
+  config UI. If the firmware served here doesn't already have your country configured, it won't
+  associate - see <code>sdkconfig.defaults</code>'s <code>CONFIG_HALOW_COUNTRY_CODE</code> in the repo.
+</p>
+
+<p><small>Firmware built automatically from the repository's <code>main</code> branch.</small></p>
+</body>
+</html>

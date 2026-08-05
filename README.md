@@ -16,6 +16,18 @@ for what's confirmed vs. still-to-verify about the Pi side of the link, and
 [`docs/PROGRESS.md`](docs/PROGRESS.md) for current status and what's next - start there if
 you're picking this project back up.
 
+## Flashing (no toolchain needed)
+
+`web-flasher/` is a browser-based flasher ([ESP Web Tools](https://esphome.github.io/esp-web-tools/),
+Web Serial - Chrome/Edge only) that flashes firmware built automatically by
+[`.github/workflows/build-firmware.yml`](.github/workflows/build-firmware.yml) on every push to
+`main`. It only flashes firmware with placeholder config; see "Configuring a node" below for
+setting real values afterward - nothing is typed into the flasher page itself.
+
+**One-time setup this repo still needs**: GitHub Pages must be enabled with source "GitHub
+Actions" (repo Settings → Pages) before the workflow's deploy step will succeed - it isn't
+something a push can turn on by itself.
+
 ## Status
 
 `idf.py build` passes end-to-end against ESP-IDF v5.5.1 and the real `morsemicro/halow`
@@ -52,8 +64,14 @@ The `morsemicro/halow` component is pulled automatically from the ESP Component 
 
 Config (uplink SSID/PSK/security, local SoftAP SSID/PSK/subnet, node id, CoT multicast
 group/port) is stored in NVS, not hardcoded. On first boot it falls back to placeholder defaults
-(open uplink, `xiao-gateway` SoftAP on `192.168.50.0/24`). To provision a real node, connect over
-the serial console (`idf.py monitor`) and use:
+(open uplink, `xiao-gateway` SoftAP on `192.168.50.0/24`). Two ways to change it, both writing to
+the same config - use whichever's convenient:
+
+**Web UI** (no cable needed): connect to the device's own Wi-Fi (`xiao-gateway` /
+`openmanet` by default), then browse to `http://192.168.50.1/`. Passwords are never shown back to
+you - leave a password field blank to keep its current value.
+
+**Serial console** (`idf.py monitor`, or any terminal at the same USB-Serial-JTAG port):
 
 ```
 xiao-gw> gwcfg-show
@@ -65,9 +83,9 @@ xiao-gw> gwcfg-save
 
 (HaLow has no WPA2-PSK mode - only open, OWE, or SAE. There's no uplink channel option either:
 HaLow picks a channel from the regulatory domain set by `CONFIG_HALOW_COUNTRY_CODE`, a build-time
-Kconfig value, not something set here.)
+Kconfig value, not something set here or in the web UI.)
 
-Reboot after `gwcfg-save` for uplink/SoftAP changes to take effect.
+Reboot after saving (either transport) for uplink/SoftAP changes to take effect.
 
 ## Repo layout
 
@@ -79,8 +97,14 @@ main/
 ├── uplink_halow.c       HaLow STA uplink via morsemicro/halow, reconnect/backoff
 ├── downlink_softap.c    local 2.4GHz SoftAP + DHCP for phones/tablets/ATAK devices
 ├── ip_forward_nat.c     NAPT between the uplink and SoftAP netifs
-└── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
-partitions.csv           custom 2MB app partition (default 1MB is too small for this build)
+├── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
+├── web_ui.c             on-device HTTP config UI (same NVS config as gwcfg-*)
+└── web_ui.html          embedded into the firmware image, not a separate filesystem
+partitions.csv           custom 3MB app partition (default 1MB is too small for this build)
+web-flasher/
+└── index.html           ESP Web Tools browser flasher page (see .github/workflows/)
+.github/workflows/
+└── build-firmware.yml   builds firmware + deploys web-flasher/ to GitHub Pages on push
 docs/
 ├── DESIGN.md            full design document
 ├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link

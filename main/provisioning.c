@@ -95,13 +95,33 @@ esp_err_t provisioning_save(const gw_config_t *cfg)
     return err;
 }
 
+const char *provisioning_security_name(gw_security_mode_t sec)
+{
+    static const char *names[] = { "open", "owe", "sae" };
+    if ((size_t)sec >= sizeof(names) / sizeof(names[0])) {
+        return "open";
+    }
+    return names[sec];
+}
+
+/* HaLow (802.11ah) has no WPA2-PSK mode - only open/OWE/SAE, confirmed
+ * against the real morsemicro/halow SDK's enum mmwlan_security_type. */
+gw_security_mode_t provisioning_parse_security(const char *s)
+{
+    if (strcmp(s, "owe") == 0) {
+        return GW_SECURITY_OWE;
+    }
+    if (strcmp(s, "sae") == 0) {
+        return GW_SECURITY_SAE;
+    }
+    return GW_SECURITY_OPEN;
+}
+
 static void print_config(const gw_config_t *cfg)
 {
-    static const char *security_names[] = { "open", "owe", "sae" };
-
     printf("node_id       : %s\n", cfg->node_id);
     printf("uplink.ssid   : %s\n", cfg->uplink.ssid);
-    printf("uplink.security: %s\n", security_names[cfg->uplink.security]);
+    printf("uplink.security: %s\n", provisioning_security_name(cfg->uplink.security));
     printf("softap.ssid   : %s\n", cfg->softap.ssid);
     printf("softap.channel: %u\n", cfg->softap.channel);
     printf("softap.subnet : %s\n",
@@ -130,19 +150,6 @@ static int cmd_gwcfg_set_node(int argc, char **argv)
     return 0;
 }
 
-/* HaLow (802.11ah) has no WPA2-PSK mode - only open/OWE/SAE, confirmed
- * against the real morsemicro/halow SDK's enum mmwlan_security_type. */
-static gw_security_mode_t parse_security(const char *s)
-{
-    if (strcmp(s, "owe") == 0) {
-        return GW_SECURITY_OWE;
-    }
-    if (strcmp(s, "sae") == 0) {
-        return GW_SECURITY_SAE;
-    }
-    return GW_SECURITY_OPEN;
-}
-
 static int cmd_gwcfg_set_uplink(int argc, char **argv)
 {
     if (!s_cfg || argc < 4) {
@@ -151,7 +158,7 @@ static int cmd_gwcfg_set_uplink(int argc, char **argv)
     }
     strlcpy(s_cfg->uplink.ssid, argv[1], sizeof(s_cfg->uplink.ssid));
     strlcpy(s_cfg->uplink.psk, strcmp(argv[2], "-") == 0 ? "" : argv[2], sizeof(s_cfg->uplink.psk));
-    s_cfg->uplink.security = parse_security(argv[3]);
+    s_cfg->uplink.security = provisioning_parse_security(argv[3]);
     printf("uplink config updated in RAM; run 'gwcfg-save' then reboot to apply\n");
     return 0;
 }

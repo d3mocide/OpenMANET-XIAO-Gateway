@@ -10,6 +10,7 @@
 #include "ip_forward_nat.h"
 #include "provisioning.h"
 #include "uplink_halow.h"
+#include "web_ui.h"
 
 static const char *TAG = "app_main";
 
@@ -67,15 +68,16 @@ void app_main(void)
         ESP_LOGW(TAG, "console start failed: %s", esp_err_to_name(err));
     }
 
-    /* HaLow uplink integration is currently a stub (see uplink_halow.c) -
-     * init/start are still called so the reconnect/backoff scaffolding and
-     * the rest of the pipeline can be exercised once it's wired up, without
-     * this module needing to change. */
+    /* Same config, second transport: reachable at the SoftAP's IP once
+     * connected to it (DESIGN.md §5.6). */
+    err = web_ui_start(&s_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "web UI start failed: %s", esp_err_to_name(err));
+    }
+
     err = uplink_halow_init(&s_cfg.uplink);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "HaLow uplink init: %s (expected until the component "
-                       "integration in uplink_halow.c is filled in)",
-                 esp_err_to_name(err));
+        ESP_LOGE(TAG, "HaLow uplink init failed: %s", esp_err_to_name(err));
     }
     uplink_halow_set_state_callback(on_uplink_state, &s_cfg);
     err = uplink_halow_start();

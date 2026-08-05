@@ -1,0 +1,77 @@
+name: Build firmware and deploy web flasher
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Builds inside the official espressif/idf Docker image for the pinned
+      # version - avoids the local-toolchain gotchas found setting this up by
+      # hand (see docs/PROGRESS.md): missing libusb for openocd, the Python
+      # venv step silently not completing, etc.
+      - name: Build firmware
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.1
+          target: esp32s3
+          path: "."
+          command: idf.py build
+
+      - name: Assemble web flasher site
+        run: |
+          set -eu
+          mkdir -p site
+          cp web-flasher/index.html site/
+          cp build/bootloader/bootloader.bin site/
+          cp build/partition_table/partition-table.bin site/
+          cp build/xiao_halow_gateway.bin site/
+
+          VERSION="$(git rev-parse --short HEAD)"
+          cat > site/manifest.json <<EOF
+          {
+            "name": "XIAO HaLow Gateway",
+            "version": "${VERSION}",
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "bootloader.bin", "offset": 0 },
+                  { "path": "partition-table.bin", "offset": 32768 },
+                  { "path": "xiao_halow_gateway.bin", "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

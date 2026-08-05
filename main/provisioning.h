@@ -25,6 +25,11 @@ esp_err_t provisioning_load(gw_config_t *cfg);
 /* Persists cfg to NVS. */
 esp_err_t provisioning_save(const gw_config_t *cfg);
 
+/* Shared uplink-security (de)serialization, used by both the console
+ * (gwcfg-set-uplink) and the web UI so the two never drift apart. */
+gw_security_mode_t provisioning_parse_security(const char *s);
+const char *provisioning_security_name(gw_security_mode_t sec);
+
 /* Registers `gwcfg-*` esp_console commands that read/mutate *cfg in place
  * and can persist it via provisioning_save(). cfg must outlive the console. */
 esp_err_t provisioning_register_console_commands(gw_config_t *cfg);

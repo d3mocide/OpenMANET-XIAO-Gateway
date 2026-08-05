@@ -15,8 +15,10 @@ below or learn something that changes it.
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
 component fetched from the ESP Component Registry - verified by actually running the build in a
 throwaway ESP-IDF checkout, not just by reading code. The binary links and fits its partition
-(21% headroom). All of `main/*.c`, including the HaLow STA uplink, compiles clean against the
-real component headers.
+(46% headroom in a 3MB app partition, on confirmed real 8MB flash). All of `main/*.c`, including
+the HaLow STA uplink and the on-device web config UI (added after the initial build-verification
+pass - see "Web flasher + on-device management UI" below), compiles clean against the real
+component headers.
 
 **What that build pass does *not* mean:** nothing has been flashed to real hardware. A compiling
 build proves the code is internally consistent against the real APIs; it doesn't prove the HaLow
@@ -98,6 +100,38 @@ None of these were guessed - each was a real error or a fact pulled directly fro
    using the earlier signal would have let NAT/CoT-relay code call `esp_netif_get_ip_info()`
    before DHCP finished, silently working against `0.0.0.0`.
 
+## Web flasher + on-device management UI
+
+Added after the initial build-verification pass, on request:
+
+- **`main/web_ui.c`/`.html`**: `esp_http_server` serving a single self-contained HTML page
+  (embedded via CMake `EMBED_FILES`, no separate filesystem partition) at the SoftAP's IP. REST
+  endpoints (`GET`/`POST /api/config`, `POST /api/reboot`) read/write the *same* `gw_config_t` /
+  `provisioning_save()` the `gwcfg-*` console commands use - it's a second transport onto
+  identical logic, not a parallel config system. Passwords are never echoed back in `GET
+  /api/config` responses; a blank password field on save means "keep current," not "clear it."
+  Compiles clean (verified the same way as everything else - see above).
+- **`web-flasher/`**: a static [ESP Web Tools](https://esphome.github.io/esp-web-tools/) page
+  (Web Serial, Chrome/Edge only) that flashes the firmware with placeholder config - it does not
+  bake in Wi-Fi/HaLow credentials from the browser. Real config happens after flashing via the
+  web UI above.
+- **`.github/workflows/build-firmware.yml`**: builds firmware in the official `espressif/idf`
+  Docker image (via `espressif/esp-idf-ci-action`, sidesteps the local-toolchain gotchas found
+  above entirely) on every push to `main`, generates `manifest.json`, and deploys
+  `web-flasher/` + the built binaries to GitHub Pages.
+  **Not yet exercised for real** - no push to `main` has triggered it yet in this environment, and
+  **GitHub Pages needs a one-time manual enable** (repo Settings → Pages → Source: "GitHub
+  Actions") before the deploy step will succeed; that's a web UI action, not something a
+  commit can do.
+- Bumped flash to the confirmed real 8MB and the app partition to 3MB (from 2MB) to give the
+  larger binary (HTTP server + cJSON + embedded HTML) comfortable headroom.
+
+Trade-off made deliberately, not by default: config is **not** baked into the flashed image from
+the browser (which would mean reimplementing ESP-IDF's NVS binary format in JavaScript and
+keeping it byte-exact with `gw_config_t` forever - fragile). First-time setup is "flash, connect
+to the device's own SoftAP, use the web UI" instead - one config UI for both first boot and later
+changes.
+
 ## What's implemented
 
 | Module | File | Status |
@@ -107,7 +141,9 @@ None of these were guessed - each was a real error or a fact pulled directly fro
 | NAPT (uplink NAT) | `main/ip_forward_nat.c` | Implemented via `esp_netif_napt_enable()`, called once the uplink gets an IP. Not yet flashed/tested. |
 | CoT multicast relay | `main/cot_relay.c` | Implemented: single socket joined to 239.2.3.1:6969 on both netifs, uses `IP_PKTINFO`/`recvmsg()` to identify arrival interface and avoid a forwarding loop. Not yet flashed/tested. |
 | Provisioning (NVS + console) | `main/provisioning.c` | Implemented: `gwcfg-show` / `gwcfg-set-uplink` / `gwcfg-set-softap` / `gwcfg-set-node` / `gwcfg-save` / `gwcfg-reset` over the serial console (now on the right USB peripheral), NVS blob load/save, placeholder defaults. Not yet flashed/tested. |
-| App wiring | `main/app_main.c` | Brings up SoftAP + console immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP. Not yet flashed/tested. |
+| Web config UI | `main/web_ui.c`/`.html` | Implemented: `esp_http_server` + embedded HTML form, GET/POST `/api/config`, POST `/api/reboot`, same NVS config as the console. Not yet flashed/tested. |
+| App wiring | `main/app_main.c` | Brings up SoftAP + console + web UI immediately; brings up NAT + CoT relay once the uplink reports a DHCP-leased IP. Not yet flashed/tested. |
+| Web flasher + CI | `web-flasher/`, `.github/workflows/build-firmware.yml` | Implemented: ESP Web Tools page + GitHub Actions build/deploy. **Not yet run for real** - needs GitHub Pages enabled (Settings → Pages → Source: GitHub Actions) and a push to `main` to exercise it. |
 
 ## Build-order checklist (DESIGN.md §8)
 
@@ -125,9 +161,10 @@ None of these were guessed - each was a real error or a fact pulled directly fro
       uplink (steps 1-2) to test for real.
 - [ ] **Step 5** - CoT multicast relay validated (ATAK on a phone sees mesh CoT and vice versa).
       Needs a working uplink to test for real.
-- [ ] **Step 6** - Provisioning/config UX pass. Serial console (`gwcfg-*`) exists; no onboard
-      config portal (e.g. captive portal / BLE) has been built - console-only is the current
-      state, which DESIGN.md §5.6 calls a valid "standard ESP-IDF pattern" option.
+- [ ] **Step 6** - Provisioning/config UX pass. Serial console (`gwcfg-*`) and an on-device web UI
+      (`main/web_ui.c`, connect to the SoftAP and browse to its IP) both exist now, compile clean,
+      neither flashed/tested on hardware yet. No captive-portal DNS redirect (visiting *any* URL
+      auto-opens the config page) - user has to know to browse to the device's IP.
 
 ## Open questions
 
@@ -156,3 +193,7 @@ Tracked in detail in [`pi_side_reference.md`](pi_side_reference.md):
   exact board pairing (Seeed XIAO ESP32S3 + Seeed XIAO WM6108) and never checked against a
   physical board - if the real hardware differs even slightly (different HaLow HAT, different
   wiring), this needs regenerating from `managed_components/morsemicro__halow/configs/`.
+- The web UI (`main/web_ui.c`) has no authentication - anyone who can join the SoftAP (i.e. who
+  knows its password) can reconfigure the gateway. Acceptable for v1 given the SoftAP itself
+  already requires a password by default, but worth revisiting if that's not enough isolation for
+  a real deployment.

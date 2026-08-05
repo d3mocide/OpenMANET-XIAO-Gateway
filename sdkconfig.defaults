@@ -54,13 +54,12 @@ CONFIG_HALOW_COUNTRY_CODE="??"
 
 # --- Partition table: the default single-app table only allows a 1MB app
 # partition, but this firmware (HaLow SDK + softAP + NAT + CoT relay +
-# console) doesn't fit - a real `idf.py build` failed with "app partition
-# is too small ... overflow 0x93970" (~600KB over) against the default, and
-# still didn't fit the built-in "large" preset (1500K). Follow the
-# component's own dual_if example (the closest in scope to this project -
-# HaLow STA + native WiFi AP together) and use a custom 2MB partition
-# table. 4MB flash is a conservative minimum (dual_if's own choice); safe
-# even if the real board has more. ---
+# console + web UI) doesn't fit - a real `idf.py build` failed with "app
+# partition is too small ... overflow 0x93970" (~600KB over) against the
+# default, and still didn't fit the built-in "large" preset (1500K). Custom
+# 3MB app partition, confirmed real flash size is 8MB (this board's actual
+# spec, not a conservative guess) so there's plenty of margin for growth
+# (self-beacon, bigger web UI, etc.) without revisiting this again soon. ---
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
