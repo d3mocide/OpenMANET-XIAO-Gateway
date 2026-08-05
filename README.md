@@ -24,11 +24,15 @@ Web Serial - Chrome/Edge only) that flashes firmware built automatically by
 `main`. It only flashes firmware with placeholder config; see "Configuring a node" below for
 setting real values afterward - nothing is typed into the flasher page itself.
 
-The workflow builds one firmware binary per region (a build matrix over `country-configs/*.defaults`,
-currently just US) with `CONFIG_HALOW_COUNTRY_CODE` baked in, since that's a build-time value the
-device can't be told at runtime. The flasher page has a region picker above the flash button -
-pick yours before flashing. Add a region by adding a `country-configs/<CODE>.defaults` file
-(one line: `CONFIG_HALOW_COUNTRY_CODE="<CODE>"`) and a matching matrix/dropdown entry.
+The workflow builds one firmware binary per region (a build matrix over `country-configs/*.defaults`)
+with `CONFIG_HALOW_COUNTRY_CODE` baked in, since that's a build-time value the device can't be told
+at runtime. The flasher page has a region picker above the flash button - pick yours before
+flashing. Regions currently built: **US, CA, EU, GB, AU, NZ, JP, KR, IN** - exactly the 9 regulatory
+domains Morse Micro's `mmregdb` (upstream of `morsemicro/halow`) ships channel data for as of this
+writing. That list can't be freely extended to any country: a code with no upstream regdb entry
+won't have a real channel plan to build against. Adding a region once Morse Micro ships data for it
+is a new `country-configs/<CODE>.defaults` file (one line: `CONFIG_HALOW_COUNTRY_CODE="<CODE>"`)
+plus a matching matrix/dropdown entry.
 
 **One-time setup this repo still needs**: GitHub Pages must be enabled with source "GitHub
 Actions" (repo Settings → Pages) before the workflow's deploy step will succeed - it isn't
@@ -111,7 +115,8 @@ partitions.csv           custom 3MB app partition (default 1MB is too small for 
 docs/
 └── index.html           ESP Web Tools browser flasher page, region picker + per-region manifest
 country-configs/
-└── US.defaults          per-region CONFIG_HALOW_COUNTRY_CODE override, layered onto sdkconfig.defaults
+└── {US,CA,EU,GB,AU,NZ,JP,KR,IN}.defaults
+                        per-region CONFIG_HALOW_COUNTRY_CODE override, layered onto sdkconfig.defaults
 .github/workflows/
 └── build-firmware.yml   builds one firmware per region + deploys docs/ to GitHub Pages on push
 design/

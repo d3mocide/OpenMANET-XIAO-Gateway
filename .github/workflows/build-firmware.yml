@@ -21,9 +21,13 @@ jobs:
         # Regulatory domain, baked into the firmware at build time via
         # CONFIG_HALOW_COUNTRY_CODE (see country-configs/*.defaults) - this
         # can't be a runtime/gwcfg-* setting, so each region needs its own
-        # binary. Add an ISO 3166-1 alpha-2 entry here + a matching
-        # country-configs/<CODE>.defaults once it's confirmed to build.
-        country: [US]
+        # binary. This list is exactly the 9 domains Morse Micro's regdb
+        # (mmregdb.c, upstream of morsemicro/halow) actually ships channel
+        # tables for - not an arbitrary/expandable country list. Adding an
+        # entry here requires a matching country-configs/<CODE>.defaults AND
+        # a real regdb entry for that code upstream; other countries aren't
+        # buildable until Morse Micro ships regulatory data for them.
+        country: [US, CA, EU, GB, AU, NZ, JP, KR, IN]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
