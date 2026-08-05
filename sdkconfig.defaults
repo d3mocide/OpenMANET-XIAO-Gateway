@@ -51,3 +51,16 @@ CONFIG_MM_CHIP_MM6108=y
 # uplink SSID/security, it cannot be changed later via gwcfg-* at runtime,
 # because mmhalow_init() reads it directly from Kconfig.
 CONFIG_HALOW_COUNTRY_CODE="??"
+
+# --- Partition table: the default single-app table only allows a 1MB app
+# partition, but this firmware (HaLow SDK + softAP + NAT + CoT relay +
+# console) doesn't fit - a real `idf.py build` failed with "app partition
+# is too small ... overflow 0x93970" (~600KB over) against the default, and
+# still didn't fit the built-in "large" preset (1500K). Follow the
+# component's own dual_if example (the closest in scope to this project -
+# HaLow STA + native WiFi AP together) and use a custom 2MB partition
+# table. 4MB flash is a conservative minimum (dual_if's own choice); safe
+# even if the real board has more. ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
