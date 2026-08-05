@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 #include "esp_err.h"
 #include "gw_config.h"
 
@@ -7,8 +9,25 @@
 extern "C" {
 #endif
 
-/* Initializes the NVS flash partition. Call once at boot before load/save. */
+/* Initializes the NVS flash partition and the live-config mutex. Call once at
+ * boot, before load/save and before any task that touches the config runs. */
 esp_err_t provisioning_init(void);
+
+/* Serializes access to the live gw_config_t shared by app_main, the console
+ * REPL, and the httpd task. Hold across any read-modify-write of it; the
+ * lock is recursive-free, so don't nest. Safe to call before
+ * provisioning_init() (no-ops until the mutex exists). */
+void provisioning_config_lock(void);
+void provisioning_config_unlock(void);
+
+/* Rejects a config that esp_wifi/lwIP would refuse at bring-up, or that
+ * would take down the SoftAP the device is managed over (e.g. a WPA2
+ * passphrase outside 8-63 chars, an out-of-range channel, a non-multicast
+ * CoT group). Returns ESP_OK if usable, otherwise ESP_ERR_INVALID_ARG with a
+ * human-readable explanation written to errbuf. Called automatically by
+ * provisioning_save() and provisioning_load(); call it directly when you
+ * want the reason string to show the user. */
+esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t errbuf_len);
 
 /* Fills cfg with the built-in placeholder defaults (DESIGN.md §5.6). The
  * uplink SSID/security in particular are guesses, not confirmed values -
@@ -22,7 +41,9 @@ void provisioning_get_defaults(gw_config_t *cfg);
  * "no config yet" is a normal first-boot state. */
 esp_err_t provisioning_load(gw_config_t *cfg);
 
-/* Persists cfg to NVS. */
+/* Persists cfg to NVS, stamping it with the current magic/version. Validates
+ * first and returns ESP_ERR_INVALID_ARG without writing if the config is
+ * unusable, so a bad value can't be made permanent. */
 esp_err_t provisioning_save(const gw_config_t *cfg);
 
 /* Shared uplink-security (de)serialization, used by both the console

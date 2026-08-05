@@ -12,6 +12,26 @@ extern "C" {
 #define GW_NODE_ID_MAX_LEN  32
 #define GW_IP4_STR_MAX_LEN  16 /* "255.255.255.255" + NUL */
 
+/* WPA2-PSK passphrase bounds, fixed by the 802.11i spec and enforced by
+ * esp_wifi at AP start - a SoftAP configured outside this range fails to
+ * come up, which on this device would take the primary management path
+ * (the SoftAP itself) down with it. Validated before save, not at boot. */
+#define GW_WPA2_PSK_MIN_LEN 8
+#define GW_WPA2_PSK_MAX_LEN 63
+
+/* 2.4GHz SoftAP channel range. 14 is excluded deliberately: it's Japan-only
+ * and 802.11b-only, and esp_wifi rejects it under most country settings. */
+#define GW_SOFTAP_CHANNEL_MIN 1
+#define GW_SOFTAP_CHANNEL_MAX 13
+
+/* Stamped into every persisted blob so a layout change is detected rather
+ * than silently reinterpreted. Bump GW_CONFIG_VERSION whenever the shape or
+ * meaning of anything below changes; a mismatch makes provisioning_load()
+ * fall back to defaults and say so, instead of loading garbage into a
+ * deployed unit. */
+#define GW_CONFIG_MAGIC   0x4F4D4757u /* "OMGW" */
+#define GW_CONFIG_VERSION 1u
+
 /* Security modes the HaLow uplink STA can be configured for. Must match
  * whatever the associated Pi's HaLow AP is running (DESIGN.md §4.1/§6.3) -
  * unknown at scaffold time, so this is provisioned, not hardcoded.
@@ -58,6 +78,11 @@ typedef struct {
 } gw_cot_config_t;
 
 typedef struct {
+    /* Must stay first and must not change type - provisioning_load() reads
+     * these before trusting anything after them. */
+    uint32_t magic;   /* GW_CONFIG_MAGIC */
+    uint32_t version; /* GW_CONFIG_VERSION */
+
     char node_id[GW_NODE_ID_MAX_LEN + 1];
     gw_uplink_config_t uplink;
     gw_softap_config_t softap;

@@ -36,12 +36,18 @@ static void on_uplink_state(bool connected, void *ctx)
     esp_netif_t *uplink_netif = uplink_halow_get_netif();
     esp_netif_t *softap_netif = downlink_softap_get_netif();
 
-    esp_err_t err = ip_forward_nat_init(uplink_netif);
+    /* NAPT goes on the SoftAP side, default route on the uplink - see
+     * ip_forward_nat.h for why that direction is not the intuitive one. */
+    esp_err_t err = ip_forward_nat_init(softap_netif, uplink_netif);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "NAT init failed: %s", esp_err_to_name(err));
     }
 
-    err = cot_relay_start(uplink_netif, softap_netif, &cfg->cot);
+    provisioning_config_lock();
+    gw_cot_config_t cot = cfg->cot;
+    provisioning_config_unlock();
+
+    err = cot_relay_start(uplink_netif, softap_netif, &cot);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "CoT relay start failed: %s", esp_err_to_name(err));
     }
@@ -69,13 +75,22 @@ void app_main(void)
     }
 
     /* Same config, second transport: reachable at the SoftAP's IP once
-     * connected to it (DESIGN.md §5.6). */
-    err = web_ui_start(&s_cfg);
+     * connected to it (DESIGN.md §5.6). The SoftAP netif is passed so the
+     * server can refuse requests arriving from the mesh over the uplink -
+     * these endpoints are unauthenticated. */
+    err = web_ui_start(&s_cfg, downlink_softap_get_netif());
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "web UI start failed: %s", esp_err_to_name(err));
     }
 
-    err = uplink_halow_init(&s_cfg.uplink);
+    /* The console and web UI are already accepting edits by now, so take a
+     * consistent snapshot rather than letting the radio read a half-updated
+     * struct. */
+    provisioning_config_lock();
+    gw_uplink_config_t uplink_cfg = s_cfg.uplink;
+    provisioning_config_unlock();
+
+    err = uplink_halow_init(&uplink_cfg);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "HaLow uplink init failed: %s", esp_err_to_name(err));
     }

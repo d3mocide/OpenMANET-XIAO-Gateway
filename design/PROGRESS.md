@@ -2,11 +2,12 @@
 
 Status tracker for the XIAO HaLow gateway firmware. Read this first if you're picking the
 project back up (human or agent) - it says what's real, what's verified, and what to do next.
-Read [`DESIGN.md`](DESIGN.md) for the full design and [`pi_side_reference.md`](pi_side_reference.md)
-for Pi-side facts before making changes. Update this file's checklist whenever you finish a step
-below or learn something that changes it.
+Read [`DESIGN.md`](DESIGN.md) for the full design, [`pi_side_reference.md`](pi_side_reference.md)
+for Pi-side facts, and [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) for the pre-hardware review
+findings before making changes. Update this file's checklist whenever you finish a step below or
+learn something that changes it.
 
-- **Branch:** `claude/xaio-client-node-design-lkv9og`
+- **Branch:** `claude/technical-review-performance-mmq12j`
 - **PR:** https://github.com/d3mocide/OpenMANET-S3-Client/pull/1
 - **Last updated:** 2026-08-05
 
@@ -14,16 +15,28 @@ below or learn something that changes it.
 
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
 component fetched from the ESP Component Registry - verified by actually running the build in a
-throwaway ESP-IDF checkout, not just by reading code. The binary links and fits its partition
-(46% headroom in a 3MB app partition, on confirmed real 8MB flash). All of `main/*.c`, including
-the HaLow STA uplink and the on-device web config UI (added after the initial build-verification
-pass - see "Web flasher + on-device management UI" below), compiles clean against the real
-component headers.
+throwaway ESP-IDF checkout, not just by reading code. All of `main/*.c`, including the HaLow STA
+uplink and the on-device web config UI, compiles clean against the real component headers.
+
+**Re-verified after the technical-review fixes (2026-08-05):** clean build, **zero errors and zero
+warnings**, binary `0x1A4620` (1.64MB) with 45% free in the 3MB app partition on confirmed real
+8MB flash. Partition table generates correctly including the new 64K coredump partition at
+`0x310000`. Every ESP-IDF/lwIP API the fixes rely on was checked against the pinned v5.5.1 source
+in that same checkout rather than from memory.
 
 **What that build pass does *not* mean:** nothing has been flashed to real hardware. A compiling
 build proves the code is internally consistent against the real APIs; it doesn't prove the HaLow
 radio actually associates, DHCP actually completes, or NAT/CoT relay actually pass traffic. See
 "Build-order checklist" below for what's still real-hardware-only.
+
+**It also doesn't prove the code means what it says.** A pre-hardware review
+([`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md)) found two bugs in this clean-compiling firmware
+that would each have failed silently on hardware and looked like radio problems: the CoT relay
+dropped 100% of traffic (matched `IP_PKTINFO`'s `ipi_addr`, which carries the packet's
+*destination* - always the multicast group - instead of `ipi_ifindex`), and NAPT was enabled on
+the uplink netif when ESP-IDF requires it on the SoftAP netif. Both are fixed. Both were caught by
+checking upstream ESP-IDF/lwIP source, not by re-reading this repo. Assume the same class of error
+exists elsewhere and verify API semantics against upstream rather than inferring them.
 
 ## How this was verified (so it can be redone)
 
@@ -168,9 +181,16 @@ changes.
 - [ ] **Step 3** - Local SoftAP + DHCP validated standalone (phones can join, get a lease). The
       natural first hardware test - doesn't depend on steps 0-2 at all.
 - [ ] **Step 4** - NAPT validated (phone gets outbound mesh/internet reach). Needs a working
-      uplink (steps 1-2) to test for real.
+      uplink (steps 1-2) to test for real. Confirm translated source addresses actually appear on
+      the mesh side - NAPT was on the wrong netif until the review pass, and the failure mode is
+      "associates fine, no connectivity."
+- [ ] **Step 4a** - **Plain multicast over HaLow validated, before involving the relay.** Confirm
+      an IGMP join on the Morse Micro interface actually receives group traffic, and that the
+      Pi-side mesh forwards 239.2.3.1 at all. Multicast over mesh routing is a classic silent-drop
+      point and fails identically to a broken relay - test it in isolation so the two can't be
+      confused. See `TECHNICAL_REVIEW.md` "For hardware bring-up".
 - [ ] **Step 5** - CoT multicast relay validated (ATAK on a phone sees mesh CoT and vice versa).
-      Needs a working uplink to test for real.
+      Needs a working uplink and step 4a to test for real.
 - [ ] **Step 6** - Provisioning/config UX pass. Serial console (`gwcfg-*`) and an on-device web UI
       (`main/web_ui.c`, connect to the SoftAP and browse to its IP) both exist now, compile clean,
       neither flashed/tested on hardware yet. No captive-portal DNS redirect (visiting *any* URL
@@ -189,6 +209,37 @@ Tracked in detail in [`pi_side_reference.md`](pi_side_reference.md):
 4. Mesh-point + AP concurrency on one radio, once a second Pi joins (doesn't block a
    single-Pi build).
 
+## Pre-hardware technical review (2026-08-05)
+
+Full findings and verification detail in [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md). Summary of
+what changed in this pass - all fixes are in, none are hardware-validated:
+
+| Severity | Finding | Status |
+|---|---|---|
+| Critical | CoT relay matched `IP_PKTINFO.ipi_addr` (packet destination = the multicast group) instead of `ipi_ifindex`, so it dropped every datagram while logging success | Fixed |
+| Critical | NAPT enabled on the uplink netif; ESP-IDF requires it on the SoftAP netif, with the uplink as default route | Fixed |
+| High | Relay could ping-pong its own transmissions once arrival detection worked | Fixed - `IP_MULTICAST_LOOP` off + own-source drop |
+| High | Unauthenticated `/api/config` + `/api/reboot` reachable from the whole mesh, not just SoftAP clients | Fixed - peer address must be on the SoftAP subnet |
+| High | Invalid config (e.g. 4-char WPA2 passphrase) could be saved, killing the SoftAP management path at next boot | Fixed - shared `provisioning_validate()` |
+| Medium | Uplink could wait for a DHCP lease forever | Fixed - bounded wait, dhcpc restart, then re-associate |
+| Medium | Fast association failures still burned the full 15s connect timeout | Fixed - state callback signals both outcomes |
+| Medium | Socket leaked on `cot_relay_start()` error paths | Fixed |
+| Medium | Live `gw_config_t` shared across three tasks without locking | Fixed - `provisioning_config_lock()` |
+| Medium | Unbounded SSID/passphrase copies into the mmwlan config struct | Fixed - bounded by destination field |
+| Medium | `esp_restart()` raced its own HTTP response; unchecked cJSON/semaphore returns | Fixed |
+| Medium | NVS blob had no version stamp - a layout change would silently reset deployed units | Fixed - magic + version |
+| Perf | Assessed; no meaningful pre-hardware gains (HaLow-over-SPI is the ceiling). Added a 64K coredump partition for bring-up observability instead | Done |
+| Open | **OTA deferred pending final binary size** - single 3MB factory slot means USB-only updates today | Decision pending |
+
+**OTA is the one item deliberately left open.** Current binary measures **1.64MB** (`0x1A4620`,
+real build, 45% free in the 3MB slot), so a dual-OTA layout at 3MB per slot - keeping today's
+ceiling exactly - fits within 8MB flash with room to spare *right now*. The open question is
+therefore not capacity but whether the feature set has stopped moving (self-beacon, any auth work
+still to land). `partitions.csv` leaves the flash tail unallocated so the switch stays possible.
+The cost of waiting: units deployed before the switch need a physical cable to move to an
+OTA-capable table - so if hardware is going out to people who can't easily return it, decide
+before it ships. Detail in [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) "Deferred: OTA".
+
 ## Known v1 limitations (intentional, not bugs)
 
 - `app_main.c`'s `on_uplink_state()` only initializes NAT/CoT relay on the **first** uplink
@@ -206,4 +257,13 @@ Tracked in detail in [`pi_side_reference.md`](pi_side_reference.md):
 - The web UI (`main/web_ui.c`) has no authentication - anyone who can join the SoftAP (i.e. who
   knows its password) can reconfigure the gateway. Acceptable for v1 given the SoftAP itself
   already requires a password by default, but worth revisiting if that's not enough isolation for
-  a real deployment.
+  a real deployment. As of the review pass this is now genuinely limited to SoftAP clients: the
+  handlers refuse requests from outside the SoftAP subnet, so it is no longer mesh-wide. That is
+  subnet-based *authorization*, not authentication - it does not defend against a device already
+  associated to the SoftAP.
+- No OTA. Single 3MB `factory` partition means firmware updates need a USB cable. Deferred
+  deliberately pending final binary size - see the review table above and
+  [`TECHNICAL_REVIEW.md`](TECHNICAL_REVIEW.md) "Deferred: OTA".
+- The DHCP-failure recovery path re-calls `mmhalow_connect()` rather than doing a true radio-level
+  disconnect first - no `mmhalow_disconnect()` could be confirmed against the real component
+  headers. Confirm during bring-up whether a cleaner API exists.
