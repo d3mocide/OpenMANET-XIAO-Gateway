@@ -1,0 +1,12 @@
+dependencies:
+  idf: ">=5.1"
+  # Morse Micro HaLow ESP-IDF component (WM6180/MM6108, SPI). This is the
+  # STA uplink radio in uplink_halow.c — see DESIGN.md §3/§5.1.
+  #
+  # NOTE: version pin below is best-effort from the component registry page
+  # (https://components.espressif.com/components/morsemicro/halow) as of
+  # this writing. Confirm the current version/namespace there and with
+  # `idf.py add-dependency "morsemicro/halow"` before building — it was not
+  # possible to verify this against actual fetched component headers in the
+  # environment this scaffold was written in (no ESP-IDF toolchain present).
+  morsemicro/halow: "^2.11.2-esp32-2"

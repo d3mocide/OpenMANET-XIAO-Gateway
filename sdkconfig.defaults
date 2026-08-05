@@ -1,0 +1,24 @@
+# Target is set via `idf.py set-target esp32s3` (not pinned here so this file
+# stays portable if a C5 build is added later per DESIGN.md §3).
+
+# --- lwIP: required for XIAO-side IP forwarding + NAT between the HaLow
+# uplink netif and the local SoftAP netif (DESIGN.md §4.2/§4.3). ---
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
+
+# IGMP is required for the CoT multicast relay (239.2.3.1:6969, DESIGN.md §5.4)
+# to join/leave multicast groups on both netifs.
+CONFIG_LWIP_IGMP=y
+
+# The CoT relay uses IP_PKTINFO/recvmsg() on a single dual-joined socket to
+# determine which netif each multicast datagram actually arrived on, so it
+# can be forwarded out the other one without risking a loop.
+CONFIG_LWIP_NETBUF_RECVINFO=y
+
+# SoftAP + STA concurrently: the native 2.4GHz radio runs AP-only in this
+# design (downlink_softap), while HaLow uplink runs on the separate SPI
+# radio (uplink_halow), so plain AP mode is sufficient here.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# esp_console is used by provisioning.c for the runtime config CLI.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
