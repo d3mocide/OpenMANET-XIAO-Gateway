@@ -75,11 +75,11 @@ The `morsemicro/halow` component is pulled automatically from the ESP Component 
 
 Config (uplink SSID/PSK/security, local SoftAP SSID/PSK/subnet, node id, CoT multicast
 group/port) is stored in NVS, not hardcoded. On first boot it falls back to placeholder defaults
-(open uplink, `xiao-gateway` SoftAP on `192.168.50.0/24`). Two ways to change it, both writing to
+(open uplink, `xiao-gateway` SoftAP on `172.16.41.0/24`). Two ways to change it, both writing to
 the same config - use whichever's convenient:
 
 **Web UI** (no cable needed): connect to the device's own Wi-Fi (`xiao-gateway` /
-`openmanet` by default), then browse to `http://192.168.50.1/`. Passwords are never shown back to
+`openmanet` by default), then browse to `http://172.16.41.1/`. Passwords are never shown back to
 you - leave a password field blank to keep its current value.
 
 **Serial console** (`idf.py monitor`, or any terminal at the same USB-Serial-JTAG port):
@@ -88,9 +88,16 @@ you - leave a password field blank to keep its current value.
 xiao-gw> gwcfg-show
 xiao-gw> gwcfg-set-uplink <ssid> <psk|-> <open|owe|sae>
 xiao-gw> gwcfg-set-softap <ssid> <psk|-> [channel]
+xiao-gw> gwcfg-set-subnet <ip> [netmask]        # or: gwcfg-set-subnet default
 xiao-gw> gwcfg-set-node <node_id>
 xiao-gw> gwcfg-save
 ```
+
+**Running more than one gateway on the same mesh?** Give each a different local subnet
+(`gwcfg-set-subnet`). Their client traffic won't collide either way — each gateway NATs behind its
+own mesh address — but ATAK advertises each device's private address inside CoT payloads, so
+identical subnets on two gateways let a direct message reach the wrong device rather than simply
+failing. See [`design/TECHNICAL_REVIEW.md`](design/TECHNICAL_REVIEW.md) for the details.
 
 (HaLow has no WPA2-PSK mode - only open, OWE, or SAE. There's no uplink channel option either:
 HaLow picks a channel from the regulatory domain set by `CONFIG_HALOW_COUNTRY_CODE`, a build-time

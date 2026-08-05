@@ -321,6 +321,18 @@
     </label>
     <p class="hint">8&ndash;63 characters, or blank for an open network.</p>
     <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
+    <label>Gateway address<input type="text" id="softap_ip" maxlength="15" autocomplete="off" inputmode="decimal"></label>
+    <label>Subnet mask<input type="text" id="softap_netmask" maxlength="15" autocomplete="off" inputmode="decimal"></label>
+    <p class="hint">
+      This device's own address on the local network, and the address you
+      browse to for this page. Clients get addresses from the same subnet.
+      <strong>Changing it moves this page</strong> &mdash; after rebooting,
+      browse to the new address.
+    </p>
+    <p class="hint">
+      Running more than one gateway on the same mesh? Give each one a
+      different subnet.
+    </p>
   </fieldset>
 
   <h2>ATAK CoT relay</h2>
@@ -342,6 +354,9 @@
 'use strict';
 
 var statusTimer = null;
+// Address this page was loaded against, so a save that moves the device can
+// tell the user where it went instead of silently stranding them.
+var loadedIp = null;
 
 function el(id) { return document.getElementById(id); }
 
@@ -413,6 +428,9 @@ async function loadConfig() {
     el('uplink_security').value = (cfg.uplink && cfg.uplink.security) || 'open';
     el('softap_ssid').value = (cfg.softap && cfg.softap.ssid) || '';
     el('softap_channel').value = (cfg.softap && cfg.softap.channel) || 6;
+    el('softap_ip').value = (cfg.softap && cfg.softap.ip) || '';
+    el('softap_netmask').value = (cfg.softap && cfg.softap.netmask) || '255.255.255.0';
+    loadedIp = el('softap_ip').value;
     el('cot_group').value = (cfg.cot && cfg.cot.group) || '239.2.3.1';
     el('cot_port').value = (cfg.cot && cfg.cot.port) || 6969;
   } catch (e) {
@@ -434,7 +452,10 @@ el('cfgForm').addEventListener('submit', async function (ev) {
     softap: {
       ssid: el('softap_ssid').value,
       psk: el('softap_psk').value,
-      channel: parseInt(el('softap_channel').value, 10)
+      channel: parseInt(el('softap_channel').value, 10),
+      custom_subnet: true,
+      ip: el('softap_ip').value,
+      netmask: el('softap_netmask').value
     },
     cot: {
       group: el('cot_group').value,
@@ -448,7 +469,18 @@ el('cfgForm').addEventListener('submit', async function (ev) {
       body: JSON.stringify(body)
     });
     if (res.ok) {
-      showStatus('Saved. Reboot to apply.', true);
+      var newIp = el('softap_ip').value;
+      if (loadedIp && newIp && newIp !== loadedIp) {
+        // Sticky (not auto-clearing) - this one the user has to act on.
+        var s = el('status');
+        s.textContent = 'Saved. After reboot this page moves to http://' + newIp + '/ — '
+                      + 'rejoin the Wi-Fi and browse there.';
+        s.className = 'err';
+        clearTimeout(showStatus._t);
+      } else {
+        showStatus('Saved. Reboot to apply.', true);
+      }
+      loadedIp = newIp;
       el('uplink_psk').value = '';
       el('softap_psk').value = '';
     } else {

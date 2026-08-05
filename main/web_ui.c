@@ -144,6 +144,9 @@ static esp_err_t config_get_handler(httpd_req_t *req)
     cJSON *softap = cJSON_AddObjectToObject(root, "softap");
     cJSON_AddStringToObject(softap, "ssid", s_cfg->softap.ssid);
     cJSON_AddNumberToObject(softap, "channel", s_cfg->softap.channel);
+    cJSON_AddBoolToObject(softap, "custom_subnet", s_cfg->softap.use_custom_subnet);
+    cJSON_AddStringToObject(softap, "ip", s_cfg->softap.ip);
+    cJSON_AddStringToObject(softap, "netmask", s_cfg->softap.netmask);
 
     cJSON *cot = cJSON_AddObjectToObject(root, "cot");
     cJSON_AddStringToObject(cot, "group", s_cfg->cot.group);
@@ -328,6 +331,21 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         if (cJSON_IsNumber(channel)) {
             work.softap.channel = (uint8_t)channel->valueint;
         }
+
+        const cJSON *custom = cJSON_GetObjectItemCaseSensitive(softap, "custom_subnet");
+        if (cJSON_IsBool(custom)) {
+            work.softap.use_custom_subnet = cJSON_IsTrue(custom);
+        }
+        if (!too_long) {
+            copy_json_str(softap, "ip", work.softap.ip, sizeof(work.softap.ip), &too_long);
+        }
+        if (!too_long) {
+            copy_json_str(softap, "netmask", work.softap.netmask, sizeof(work.softap.netmask), &too_long);
+        }
+        /* The device routes for its own clients, so its gateway address is
+         * always its own address. Kept in lockstep rather than exposed as a
+         * separate field nobody would have a reason to set differently. */
+        strlcpy(work.softap.gateway, work.softap.ip, sizeof(work.softap.gateway));
     }
 
     const cJSON *cot = cJSON_GetObjectItemCaseSensitive(root, "cot");
@@ -351,8 +369,21 @@ static esp_err_t config_post_handler(httpd_req_t *req)
     /* Semantic validation on top of the length checks above: this is what
      * stops a 4-character Wi-Fi passphrase or channel 99 from being saved
      * and taking the SoftAP - and with it this very UI - down at next boot. */
-    char reason[96];
+    char reason[128];
     if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, reason);
+        return ESP_FAIL;
+    }
+
+    /* Catches a local subnet that would swallow the mesh address this gateway
+     * currently holds - accepted, it would look fine until nothing could
+     * reach the mesh after the next reboot. */
+    uint32_t uplink_ip = 0;
+    esp_netif_ip_info_t uplink_info;
+    if (esp_netif_get_ip_info(uplink_halow_get_netif(), &uplink_info) == ESP_OK) {
+        uplink_ip = uplink_info.ip.addr;
+    }
+    if (provisioning_check_runtime_conflict(&work, uplink_ip, reason, sizeof(reason)) != ESP_OK) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, reason);
         return ESP_FAIL;
     }

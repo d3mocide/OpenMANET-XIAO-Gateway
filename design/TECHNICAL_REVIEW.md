@@ -370,6 +370,82 @@ back to `crypto.subtle` later, it will silently be `undefined` on the device.
   escape hatch (`gwcfg-reset-auth`), which is physically-present-only and therefore the right
   trust model. Document it prominently; an undocumented recovery path is the same as none.
 
+## Local subnet: why it changed, and what's still open
+
+### The old default was never a decision
+
+`192.168.50.0/24` traces to the first scaffold commit. `DESIGN.md` §4.2 only says the SoftAP
+should have "its own subnet", and the network diagram writes it as *"e.g. 192.168.50.0/24"* - an
+illustration that got copied into `provisioning_get_defaults()` and never revisited.
+
+It was also, on inspection, an unusually poor choice: **ASUS consumer routers ship with
+192.168.50.1 as a default LAN address.** A gateway whose uplink ever routed through such a
+network would treat those addresses as on-link and quietly fail to forward.
+
+**Now `172.16.41.0/24`:** disjoint from OpenMANET's `10.41.0.0/16` mesh, inside a range consumer
+gear essentially never uses, held at `172.16.x` specifically because Docker allocates bridge
+networks from `172.17`-`172.31`, and numbered `41` so it visually rhymes with the mesh.
+
+### It is now actually configurable
+
+The fields existed in `gw_softap_config_t` and were even validated - but nothing could set them.
+`gwcfg-set-softap` took only ssid/psk/channel, and so did the web UI's POST handler. The subnet
+was effectively compile-time-only. Both surfaces now expose it (`gwcfg-set-subnet <ip> [netmask]`
+and two fields in the web UI).
+
+Validation was correspondingly shallow - it checked only that the three strings parsed as
+addresses. It now rejects non-contiguous masks, network/broadcast addresses, gateways outside
+their own subnet, reserved ranges (`0/8`, `127/8`, `224/4+`, `169.254/16`), and subnets too small
+for the configured client count. `max_connections` is additionally capped at
+`CONFIG_LWIP_DHCPS_MAX_STATION_NUM`, because esp_wifi would otherwise associate more stations
+than the DHCP server has leases for - producing clients that associate and then sit with no
+address.
+
+A separate runtime check (`provisioning_check_runtime_conflict()`) rejects a local subnet that
+would swallow the mesh address the uplink currently holds. Static validation deliberately doesn't
+know about liveness, so this is its own function, called from the two interactive surfaces but
+not from the NVS load path.
+
+### Multi-gateway: what NAT does and does not save you from
+
+Two gateways on one Pi, both on the same local subnet:
+
+- **Unicast is fine.** Each gateway NATs its clients behind its own distinct mesh lease, and the
+  two SoftAPs are separate L2 domains that never see each other's ARP. Duplicate `172.16.41.1` is
+  no worse than two houses both running a router at `192.168.1.1`.
+- **ATAK CoT is not fine, and this is the sharp edge.** ATAK's CoT `<contact>` element carries an
+  `endpoint` attribute holding the sender's *own* address. The relay re-sources the IP header but
+  forwards the payload byte-for-byte - it has no idea there's an address inside the XML. With one
+  gateway that is the already-known "no inbound unicast" limitation: peers see an unroutable
+  private address and direct chat/file transfer fails. With **two gateways sharing a subnet it
+  gets worse than failure**: a device behind gateway B that dials `172.16.41.23` will connect
+  successfully - to *B's own* client at that address, a different person entirely. Silent
+  mis-delivery rather than a clean error.
+
+  **Confirm this on hardware** by capturing a real CoT multicast datagram and inspecting the
+  `endpoint` attribute. The schema is documented behaviour, but it has not been observed on this
+  setup.
+
+  Giving each gateway a distinct subnet does not fix the underlying problem - peers still can't
+  reach those addresses - but it converts silent mis-delivery back into a clean failure, which is
+  a much better place to be. The real fix is architectural: the routed/no-NAT option in
+  `DESIGN.md` §4.3. Rewriting addresses inside CoT payloads in the datapath is the obvious
+  alternative and should be resisted; XML mutation in a forwarding hot path is a liability.
+
+### Long-term goal: MAC-derived subnet + captive-portal DNS
+
+Two gateways colliding is currently prevented by an operator remembering to change a setting.
+The durable fix is to derive the third octet from the device MAC (e.g. `172.16.<mac>.1/24`) so
+two units effectively cannot collide by accident.
+
+The blocker is discovery: a user has no way to know which address to browse to, and there is no
+screen or label. That makes this dependent on the **captive-portal DNS redirect** already listed
+as a gap in `PROGRESS.md` step 6 - once any URL redirects to the config page, the device's actual
+address stops needing to be known, and per-device subnets become free.
+
+**These two should land together.** MAC-derived addressing alone would make the device harder to
+reach; the DNS redirect alone leaves the collision risk in place. Neither is scheduled yet.
+
 ## Not changed, and why
 
 - **No captive-portal DNS redirect.** Still a real UX gap (users must know to browse to the

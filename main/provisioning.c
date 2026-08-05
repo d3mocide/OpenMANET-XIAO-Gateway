@@ -5,8 +5,14 @@
 
 #include "provisioning.h"
 
+/* Only for the console's subnet command, which needs the live uplink address
+ * to run the same overlap check the web UI does. The check itself takes the
+ * address as a parameter and stays free of this dependency. */
+#include "uplink_halow.h"
+
 #include "esp_console.h"
 #include "esp_log.h"
+#include "esp_netif_ip_addr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "lwip/inet.h"
@@ -57,15 +63,31 @@ void provisioning_get_defaults(gw_config_t *cfg)
     cfg->uplink.psk[0] = '\0';
     cfg->uplink.security = GW_SECURITY_OPEN;
 
-    /* Local client-facing SoftAP (DESIGN.md §4.2), default subnet matches
-     * the example in the design doc's network diagram. */
+    /* Local client-facing SoftAP (DESIGN.md §4.2).
+     *
+     * The subnet is 172.16.41.0/24, chosen rather than inherited:
+     *  - It must not collide with the mesh. OpenMANET runs a flat
+     *    10.41.0.0/16, so anything in 10.x is out.
+     *  - The previous default, 192.168.50.0/24, was an example value copied
+     *    out of DESIGN.md's network diagram and never reconsidered. It is
+     *    also the default LAN subnet on ASUS consumer routers, which makes
+     *    an accidental collision with an upstream network unusually likely.
+     *  - 172.16/12 is essentially untouched by consumer gear. Staying at
+     *    172.16.x specifically avoids Docker, which allocates bridge
+     *    networks from 172.17-172.31.
+     *  - The 41 deliberately echoes the mesh's 10.41 so the two read as
+     *    related when someone is staring at a routing table.
+     *
+     * If more than one gateway joins the same mesh, give each a *different*
+     * subnet - see provisioning_check_runtime_conflict() and the CoT
+     * endpoint caveat in design/TECHNICAL_REVIEW.md. */
     strlcpy(cfg->softap.ssid, "xiao-gateway", sizeof(cfg->softap.ssid));
     strlcpy(cfg->softap.psk, "openmanet", sizeof(cfg->softap.psk));
     cfg->softap.channel = 6;
     cfg->softap.max_connections = 8;
     cfg->softap.use_custom_subnet = true;
-    strlcpy(cfg->softap.ip, "192.168.50.1", sizeof(cfg->softap.ip));
-    strlcpy(cfg->softap.gateway, "192.168.50.1", sizeof(cfg->softap.gateway));
+    strlcpy(cfg->softap.ip, "172.16.41.1", sizeof(cfg->softap.ip));
+    strlcpy(cfg->softap.gateway, "172.16.41.1", sizeof(cfg->softap.gateway));
     strlcpy(cfg->softap.netmask, "255.255.255.0", sizeof(cfg->softap.netmask));
 
     /* ATAK CoT multicast group (DESIGN.md §4.3/§5.4). */
@@ -208,20 +230,75 @@ esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t err
         GW_REJECT("local Wi-Fi channel must be %d-%d", GW_SOFTAP_CHANNEL_MIN, GW_SOFTAP_CHANNEL_MAX);
     }
 
-    if (cfg->softap.max_connections > 15) {
-        GW_REJECT("max_connections must be 15 or fewer");
+    /* Bounded by the DHCP server's lease table, not by the radio: esp_wifi
+     * would happily associate more stations than lwIP can hand addresses to,
+     * and the surplus clients would associate and then sit there with no IP -
+     * a confusing failure to diagnose in the field. */
+    if (cfg->softap.max_connections > CONFIG_LWIP_DHCPS_MAX_STATION_NUM) {
+        GW_REJECT("max_connections must be %d or fewer (the DHCP server's lease limit)",
+                  CONFIG_LWIP_DHCPS_MAX_STATION_NUM);
     }
 
     if (cfg->softap.use_custom_subnet) {
-        struct in_addr tmp;
-        if (inet_aton(cfg->softap.ip, &tmp) == 0) {
-            GW_REJECT("local Wi-Fi IP '%s' is not a valid address", cfg->softap.ip);
+        struct in_addr ip_a, gw_a, mask_a;
+        if (inet_aton(cfg->softap.ip, &ip_a) == 0) {
+            GW_REJECT("local network IP '%s' is not a valid address", cfg->softap.ip);
         }
-        if (inet_aton(cfg->softap.gateway, &tmp) == 0) {
-            GW_REJECT("local Wi-Fi gateway '%s' is not a valid address", cfg->softap.gateway);
+        if (inet_aton(cfg->softap.gateway, &gw_a) == 0) {
+            GW_REJECT("local network gateway '%s' is not a valid address", cfg->softap.gateway);
         }
-        if (inet_aton(cfg->softap.netmask, &tmp) == 0) {
-            GW_REJECT("local Wi-Fi netmask '%s' is not a valid address", cfg->softap.netmask);
+        if (inet_aton(cfg->softap.netmask, &mask_a) == 0) {
+            GW_REJECT("local network mask '%s' is not a valid address", cfg->softap.netmask);
+        }
+
+        uint32_t ip = ntohl(ip_a.s_addr);
+        uint32_t gw = ntohl(gw_a.s_addr);
+        uint32_t mask = ntohl(mask_a.s_addr);
+
+        /* A netmask is only meaningful as a run of ones followed by a run of
+         * zeros. For the complement of a valid mask, inv+1 carries cleanly
+         * into a single bit, so inv & (inv+1) is zero; anything else (e.g.
+         * 255.0.255.0) fails here. */
+        uint32_t inv = ~mask;
+        if (mask == 0 || (inv & (inv + 1)) != 0) {
+            GW_REJECT("local network mask '%s' is not a valid subnet mask", cfg->softap.netmask);
+        }
+
+        uint32_t network = ip & mask;
+        uint32_t broadcast = network | inv;
+        if (ip == network || ip == broadcast) {
+            GW_REJECT("local network IP '%s' is the network or broadcast address of its subnet",
+                      cfg->softap.ip);
+        }
+
+        /* The device is the router for its own clients, so its gateway
+         * address has to be reachable on-link. */
+        if ((gw & mask) != network) {
+            GW_REJECT("local network gateway '%s' is outside the subnet defined by %s/%s",
+                      cfg->softap.gateway, cfg->softap.ip, cfg->softap.netmask);
+        }
+
+        /* Addresses the SoftAP can hand out: everything in the subnet except
+         * the network address, the broadcast address, and the device itself.
+         * inv is (subnet size - 1), so this can't overflow. */
+        uint32_t usable = (inv >= 3) ? (inv - 2) : 0;
+        uint8_t wanted = cfg->softap.max_connections ? cfg->softap.max_connections : 4;
+        if (usable < wanted) {
+            GW_REJECT("subnet %s/%s has room for %u client address(es) but the AP allows %u",
+                      cfg->softap.ip, cfg->softap.netmask, (unsigned)usable, (unsigned)wanted);
+        }
+
+        /* Ranges that can never work as a local LAN. Catching these here
+         * turns a device that boots into an unreachable state into a
+         * rejected form submission. */
+        uint8_t first = (uint8_t)(ip >> 24);
+        if (first == 0 || first == 127 || first >= 224) {
+            GW_REJECT("local network IP '%s' is in a reserved range (0/8, 127/8, or 224/4+)",
+                      cfg->softap.ip);
+        }
+        if ((ip & 0xFFFF0000u) == 0xA9FE0000u) {
+            GW_REJECT("local network IP '%s' is in the link-local range (169.254/16)",
+                      cfg->softap.ip);
         }
     }
 
@@ -242,6 +319,39 @@ esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t err
     return ESP_OK;
 
 #undef GW_REJECT
+}
+
+esp_err_t provisioning_check_runtime_conflict(const gw_config_t *cfg, uint32_t uplink_ip_be,
+                                              char *errbuf, size_t errbuf_len)
+{
+    if (uplink_ip_be == 0 || !cfg->softap.use_custom_subnet) {
+        return ESP_OK; /* no lease yet, or esp-netif's default subnet is in use */
+    }
+
+    struct in_addr ip_a, mask_a;
+    if (inet_aton(cfg->softap.ip, &ip_a) == 0 || inet_aton(cfg->softap.netmask, &mask_a) == 0) {
+        return ESP_OK; /* malformed - provisioning_validate() reports it properly */
+    }
+
+    uint32_t mask = ntohl(mask_a.s_addr);
+    uint32_t local_net = ntohl(ip_a.s_addr) & mask;
+    uint32_t uplink = ntohl(uplink_ip_be);
+
+    /* If the mesh-facing address falls inside the subnet we're about to serve
+     * locally, the routing table has two claims on the same range: the
+     * gateway would treat mesh addresses as on-link and never forward to
+     * them. Everything would look configured and nothing would reach the
+     * mesh. Cheap to check, miserable to debug on hardware. */
+    if ((uplink & mask) == local_net) {
+        if (errbuf != NULL && errbuf_len > 0) {
+            snprintf(errbuf, errbuf_len,
+                     "subnet %s/%s overlaps the mesh address this gateway holds (" IPSTR ")",
+                     cfg->softap.ip, cfg->softap.netmask, IP2STR((const esp_ip4_addr_t *)&uplink_ip_be));
+        }
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return ESP_OK;
 }
 
 const char *provisioning_security_name(gw_security_mode_t sec)
@@ -273,8 +383,13 @@ static void print_config(const gw_config_t *cfg)
     printf("uplink.security: %s\n", provisioning_security_name(cfg->uplink.security));
     printf("softap.ssid   : %s\n", cfg->softap.ssid);
     printf("softap.channel: %u\n", cfg->softap.channel);
-    printf("softap.subnet : %s\n",
-           cfg->softap.use_custom_subnet ? cfg->softap.ip : "192.168.4.1 (esp-netif default)");
+    if (cfg->softap.use_custom_subnet) {
+        printf("softap.subnet : %s mask %s (gw %s)\n",
+               cfg->softap.ip, cfg->softap.netmask, cfg->softap.gateway);
+    } else {
+        printf("softap.subnet : 192.168.4.1 (esp-netif default)\n");
+    }
+    printf("softap.maxconn: %u\n", cfg->softap.max_connections);
     printf("cot           : %s:%u\n", cfg->cot.group, cfg->cot.port);
 }
 
@@ -348,6 +463,60 @@ static int cmd_gwcfg_set_softap(int argc, char **argv)
     return 0;
 }
 
+/* The uplink's current address in network byte order, or 0 if there is no
+ * lease yet. */
+static uint32_t current_uplink_ip_be(void)
+{
+    esp_netif_t *netif = uplink_halow_get_netif();
+    esp_netif_ip_info_t info;
+    if (netif == NULL || esp_netif_get_ip_info(netif, &info) != ESP_OK) {
+        return 0;
+    }
+    return info.ip.addr;
+}
+
+static int cmd_gwcfg_set_subnet(int argc, char **argv)
+{
+    if (!s_cfg || argc < 2) {
+        printf("usage: gwcfg-set-subnet <ip> [netmask]   (default mask 255.255.255.0)\n");
+        printf("       gwcfg-set-subnet default          (use esp-netif's 192.168.4.1/24)\n");
+        printf("Give each gateway on a mesh its own subnet - see design/TECHNICAL_REVIEW.md.\n");
+        return 1;
+    }
+
+    provisioning_config_lock();
+    gw_config_t work = *s_cfg;
+
+    if (strcmp(argv[1], "default") == 0) {
+        work.softap.use_custom_subnet = false;
+    } else {
+        work.softap.use_custom_subnet = true;
+        strlcpy(work.softap.ip, argv[1], sizeof(work.softap.ip));
+        /* The device is its own clients' gateway; keeping these in lockstep
+         * removes the most common way to produce an unreachable config. */
+        strlcpy(work.softap.gateway, argv[1], sizeof(work.softap.gateway));
+        strlcpy(work.softap.netmask, argc >= 3 ? argv[2] : "255.255.255.0",
+                sizeof(work.softap.netmask));
+    }
+
+    char reason[128];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+    if (provisioning_check_runtime_conflict(&work, current_uplink_ip_be(), reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
+    provisioning_config_unlock();
+    printf("subnet updated in RAM; run 'gwcfg-save' then reboot to apply\n");
+    return 0;
+}
+
 static int cmd_gwcfg_save(int argc, char **argv)
 {
     (void)argc;
@@ -395,6 +564,7 @@ esp_err_t provisioning_register_console_commands(gw_config_t *cfg)
         { .command = "gwcfg-set-node", .help = "Set node id: gwcfg-set-node <id>", .hint = NULL, .func = &cmd_gwcfg_set_node },
         { .command = "gwcfg-set-uplink", .help = "Set HaLow uplink STA config", .hint = NULL, .func = &cmd_gwcfg_set_uplink },
         { .command = "gwcfg-set-softap", .help = "Set local SoftAP config", .hint = NULL, .func = &cmd_gwcfg_set_softap },
+        { .command = "gwcfg-set-subnet", .help = "Set local subnet: gwcfg-set-subnet <ip> [netmask] | default", .hint = NULL, .func = &cmd_gwcfg_set_subnet },
         { .command = "gwcfg-save", .help = "Persist current config to NVS", .hint = NULL, .func = &cmd_gwcfg_save },
         { .command = "gwcfg-reset", .help = "Reset in-RAM config to built-in defaults", .hint = NULL, .func = &cmd_gwcfg_reset },
     };

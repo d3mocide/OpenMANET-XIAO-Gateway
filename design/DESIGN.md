@@ -72,7 +72,7 @@ an explicit follow-up once the SDK/module combination has real mileage.**
 ```
  [Phone / Tablet / ATAK device]              [Phone / Tablet / ATAK device]
         │ 2.4 GHz Wi-Fi (XIAO SoftAP)                │ 2.4 GHz Wi-Fi (Pi onboard AP)
-        │ DHCP from XIAO, e.g. 192.168.50.0/24        │ DHCP from openmanetd, mesh subnet
+        │ DHCP from XIAO, 172.16.41.0/24 (configurable)       │ DHCP from openmanetd, mesh subnet
         ▼                                             ▼
  ┌─────────────────────────────┐            ┌───────────────────────────────┐
  │        XIAO ESP32-S3         │            │              Pi                │
