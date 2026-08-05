@@ -1,0 +1,13 @@
+dependencies:
+  # morsemicro/halow@2.11.2-esp32-2 itself requires idf >=5.4.4,<6.0 -
+  # confirmed by a real `idf.py build` dependency-solve attempt (ESP-IDF
+  # v5.3.1 fails with "no versions of idf match >=5.4.4,<6.0.0"). Declared
+  # explicitly here too so the requirement is visible without having to hit
+  # that error first.
+  idf: ">=5.4.4,<6.0.0"
+  # Morse Micro HaLow ESP-IDF component (WM6180/MM6108, SPI). This is the
+  # STA uplink radio in uplink_halow.c — see DESIGN.md §3/§5.1. Name and
+  # version confirmed against the real ESP Component Registry via a live
+  # dependency solve (component resolves; the failure above was purely the
+  # idf-version constraint, not an unknown/misnamed component).
+  morsemicro/halow: "^2.11.2-esp32-2"

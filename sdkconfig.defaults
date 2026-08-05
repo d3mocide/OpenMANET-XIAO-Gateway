@@ -1,0 +1,65 @@
+# Target is set via `idf.py set-target esp32s3` (not pinned here so this file
+# stays portable if a C5 build is added later per DESIGN.md §3).
+
+# --- lwIP: required for XIAO-side IP forwarding + NAT between the HaLow
+# uplink netif and the local SoftAP netif (DESIGN.md §4.2/§4.3). ---
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
+
+# (No CONFIG_LWIP_IGMP option exists in this IDF version - it's hardcoded on
+# unconditionally in lwipopts.h, confirmed by a real build; nothing to set.)
+
+# The CoT relay uses IP_PKTINFO/recvmsg() on a single dual-joined socket to
+# determine which netif each multicast datagram actually arrived on, so it
+# can be forwarded out the other one without risking a loop.
+CONFIG_LWIP_NETBUF_RECVINFO=y
+
+# SoftAP + STA concurrently: the native 2.4GHz radio runs AP-only in this
+# design (downlink_softap), while HaLow uplink runs on the separate SPI
+# radio (uplink_halow), so plain AP mode is sufficient here.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# esp_console is used by provisioning.c for the runtime config CLI. The XIAO
+# ESP32-S3's USB-C port is wired to the chip's native USB Serial/JTAG
+# controller, not an external UART bridge - CONFIG_ESP_CONSOLE_UART_DEFAULT
+# would leave both logs and the console silent over that same cable.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# --- morsemicro/halow: Seeed XIAO ESP32S3 + Seeed XIAO WM6108 pin/chip/BCF
+# config, copied from the component's own
+# managed_components/morsemicro__halow/configs/sdkconfig.defaults.seeed_xiao_esp32s3-seeed_xiao_mm6108
+# (verified against a real `idf.py build` - the component's CMake refuses to
+# build at all without these). If the actual board/HAT pairing differs,
+# regenerate from the matching file in that configs/ directory instead of
+# hand-editing pin numbers. ---
+CONFIG_MM_RESET_N=1
+CONFIG_MM_WAKE=2
+CONFIG_MM_BUSY=5
+CONFIG_MM_SPI_SCK=7
+CONFIG_MM_SPI_MOSI=9
+CONFIG_MM_SPI_MISO=8
+CONFIG_MM_SPI_CS=4
+CONFIG_MM_SPI_IRQ=3
+CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin"
+CONFIG_MM_CHIP_MM6108=y
+
+# HaLow needs a regulatory/country code to know its legal channel list
+# (DESIGN.md §6.5) - "??" (the component's own default) is a deliberately
+# invalid placeholder that will fail to bring up the radio. Set this to the
+# real deployment country's ISO 3166-1 alpha-2 code (e.g. "US", "AU") before
+# flashing to real hardware. This is a *build-time* setting - unlike
+# uplink SSID/security, it cannot be changed later via gwcfg-* at runtime,
+# because mmhalow_init() reads it directly from Kconfig.
+CONFIG_HALOW_COUNTRY_CODE="??"
+
+# --- Partition table: the default single-app table only allows a 1MB app
+# partition, but this firmware (HaLow SDK + softAP + NAT + CoT relay +
+# console + web UI) doesn't fit - a real `idf.py build` failed with "app
+# partition is too small ... overflow 0x93970" (~600KB over) against the
+# default, and still didn't fit the built-in "large" preset (1500K). Custom
+# 3MB app partition, confirmed real flash size is 8MB (this board's actual
+# spec, not a conservative guess) so there's plenty of margin for growth
+# (self-beacon, bigger web UI, etc.) without revisiting this again soon. ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XIAO HaLow Gateway</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 32rem; margin: 1.5rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; }
+  fieldset { margin-bottom: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+  legend { font-weight: 600; padding: 0 0.4rem; }
+  label { display: block; margin-top: 0.6rem; font-size: 0.9rem; }
+  input, select { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.2rem; font-size: 1rem; }
+  button { margin-top: 1rem; padding: 0.6rem 1.2rem; font-size: 1rem; cursor: pointer; }
+  #status { margin-top: 1rem; padding: 0.6rem; border-radius: 6px; display: none; }
+  #status.ok { display: block; background: #e6f4ea; color: #1e7e34; }
+  #status.err { display: block; background: #fdecea; color: #a12622; }
+  .hint { color: #666; font-size: 0.8rem; margin-top: 0.2rem; }
+</style>
+</head>
+<body>
+<h1>XIAO HaLow Gateway</h1>
+<p class="hint">Changes are saved on submit but only take effect after a reboot.</p>
+
+<form id="cfgForm">
+  <fieldset>
+    <legend>Node</legend>
+    <label>Node ID<input type="text" id="node_id" maxlength="32"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>HaLow uplink (to the mesh Pi)</legend>
+    <label>SSID<input type="text" id="uplink_ssid" maxlength="32"></label>
+    <label>Security
+      <select id="uplink_security">
+        <option value="open">Open</option>
+        <option value="owe">OWE</option>
+        <option value="sae">SAE (WPA3)</option>
+      </select>
+    </label>
+    <label>Passphrase (SAE only)
+      <input type="password" id="uplink_psk" maxlength="64" placeholder="leave blank to keep current">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Local Wi-Fi (for phones/tablets/ATAK)</legend>
+    <label>SSID<input type="text" id="softap_ssid" maxlength="32"></label>
+    <label>Passphrase
+      <input type="password" id="softap_psk" maxlength="64" placeholder="leave blank to keep current">
+    </label>
+    <label>Channel<input type="number" id="softap_channel" min="1" max="14"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>ATAK CoT relay</legend>
+    <label>Multicast group<input type="text" id="cot_group" maxlength="15"></label>
+    <label>Port<input type="number" id="cot_port" min="1" max="65535"></label>
+  </fieldset>
+
+  <button type="submit">Save</button>
+  <button type="button" id="rebootBtn">Reboot now</button>
+</form>
+
+<div id="status"></div>
+
+<script>
+function showStatus(msg, ok) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = ok ? 'ok' : 'err';
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    const cfg = await res.json();
+    document.getElementById('node_id').value = cfg.node_id || '';
+    document.getElementById('uplink_ssid').value = cfg.uplink.ssid || '';
+    document.getElementById('uplink_security').value = cfg.uplink.security || 'open';
+    document.getElementById('softap_ssid').value = cfg.softap.ssid || '';
+    document.getElementById('softap_channel').value = cfg.softap.channel || 6;
+    document.getElementById('cot_group').value = cfg.cot.group || '239.2.3.1';
+    document.getElementById('cot_port').value = cfg.cot.port || 6969;
+  } catch (e) {
+    showStatus('Failed to load current config: ' + e, false);
+  }
+}
+
+document.getElementById('cfgForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const body = {
+    node_id: document.getElementById('node_id').value,
+    uplink: {
+      ssid: document.getElementById('uplink_ssid').value,
+      security: document.getElementById('uplink_security').value,
+      psk: document.getElementById('uplink_psk').value,
+    },
+    softap: {
+      ssid: document.getElementById('softap_ssid').value,
+      psk: document.getElementById('softap_psk').value,
+      channel: parseInt(document.getElementById('softap_channel').value, 10),
+    },
+    cot: {
+      group: document.getElementById('cot_group').value,
+      port: parseInt(document.getElementById('cot_port').value, 10),
+    },
+  };
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      showStatus('Saved. Reboot to apply.', true);
+      document.getElementById('uplink_psk').value = '';
+      document.getElementById('softap_psk').value = '';
+    } else {
+      const text = await res.text().catch(() => '');
+      showStatus('Save failed (' + res.status + ')' + (text ? ': ' + text : ''), false);
+    }
+  } catch (e) {
+    showStatus('Save failed: ' + e, false);
+  }
+});
+
+document.getElementById('rebootBtn').addEventListener('click', async () => {
+  showStatus('Rebooting...', true);
+  try {
+    await fetch('/api/reboot', { method: 'POST' });
+  } catch (e) {
+    /* connection drops as the device reboots - expected */
+  }
+});
+
+loadConfig();
+</script>
+</body>
+</html>
