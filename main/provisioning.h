@@ -29,9 +29,9 @@ void provisioning_config_unlock(void);
  * want the reason string to show the user. */
 esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t errbuf_len);
 
-/* Fills cfg with the built-in placeholder defaults (DESIGN.md §5.6). The
+/* Fills cfg with the built-in placeholder defaults. The
  * uplink SSID/security in particular are guesses, not confirmed values -
- * see design/pi_side_reference.md §6 - and must be provisioned for real
+ * see design/PI_SIDE.md - and must be provisioned for real
  * hardware before the HaLow uplink will associate. */
 void provisioning_get_defaults(gw_config_t *cfg);
 

@@ -19,7 +19,7 @@ extern "C" {
  * rebooted, is unrecoverable without this.
  *
  * A physical button is also the right trust model for a reset: it requires
- * physical presence, which is exactly the property TECHNICAL_REVIEW.md settles
+ * physical presence, which is exactly the property design/ROADMAP.md settles
  * on for credential recovery.
  *
  * The hold is deliberately long, and the LED acknowledges it partway through,

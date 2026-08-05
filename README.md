@@ -11,15 +11,51 @@ node.
 client (phone/tablet/ATAK) → Wi-Fi → XIAO SoftAP → IP fwd/NAT → HaLow STA → HaLow AP → Pi → mesh
 ```
 
-**Building a node?** Start with [`design/HARDWARE.md`](design/HARDWARE.md) (what to buy, how it
-goes together, pin map) then [`design/BRINGUP.md`](design/BRINGUP.md) (the step-by-step first-power
-runbook, and what each failure means).
+## Architecture
 
-**Picking the project back up?** Start with [`design/PROGRESS.md`](design/PROGRESS.md) for current
-status. [`design/DESIGN.md`](design/DESIGN.md) has the full design (network architecture, hardware
-choices, the NAT-vs-routed tradeoff), [`design/pi_side_reference.md`](design/pi_side_reference.md)
-what's confirmed vs. still-to-verify about the Pi side of the link, and
-[`design/FEATURES.md`](design/FEATURES.md) what isn't built yet and in what order it should be.
+```
+ [Phone / Tablet / ATAK device]              [Phone / Tablet / ATAK device]
+        │ 2.4 GHz Wi-Fi (XIAO SoftAP)                │ 2.4 GHz Wi-Fi (Pi onboard AP)
+        │ DHCP from XIAO, 172.16.50.0/24             │ DHCP from openmanetd, mesh subnet
+        ▼                                             ▼
+ ┌─────────────────────────────┐            ┌───────────────────────────────┐
+ │        XIAO ESP32-S3         │            │              Pi                │
+ │ ┌─────────┐   ┌────────────┐ │            │ ┌────────────┐  ┌────────────┐ │
+ │ │ SoftAP   │IP │ HaLow STA  │ │            │ │ onboard AP │  │ HaLow radio │ │
+ │ │ (esp_wifi)◄─►│(morsemicro/│ │            │ │ (bridged   │  │ (hostapd_s1g│ │
+ │ │ netif    │fwd│ halow,     │ │            │ │  into bat0)│  │  AP mode)   │ │
+ │ └─────────┘   │ WM6108)    │ │            │ └────────────┘  │             │ │
+ │                └─────┬──────┘ │            │                 └──────┬──────┘ │
+ └──────────────────────┼────────┘            └────────────────────────┼────────┘
+                         │  HaLow (sub-GHz), STA → AP association,      │
+                         │  DHCP lease from openmanetd's pool           │
+                         └───────────────────────────────────────────┬─┘
+                                                                      ▼
+                                bat0 (802.11s mesh + batman-adv, flat L2 —
+                                    if/when more than one Pi is deployed)
+                                                                      │
+                                              [ openmanetd: DHCP, CoT/gpsd, gateway ]
+```
+
+Traffic flows both directions: a client behind the XIAO's SoftAP can reach a client behind the Pi's
+onboard AP and vice versa. The two ends are asymmetric, though — the Pi's clients sit directly on
+the flat mesh subnet (bridged into `bat0`), while the XIAO's sit behind **NAT**, because the XIAO
+can't L2-bridge two dissimilar radios the way batman-adv bridges Pi nodes. That's why **CoT
+multicast gets an explicit relay** rather than coming for free, and why nothing on the mesh can
+originate a connection *to* a specific phone behind a XIAO. Full reasoning in
+[`design/ROADMAP.md`](design/ROADMAP.md) → "Settled decisions".
+
+## Documentation
+
+Three documents, deliberately:
+
+| Doc | For |
+|---|---|
+| [`design/ROADMAP.md`](design/ROADMAP.md) | **Start here.** Status, build-order checklist, what isn't built yet, and the decisions that shouldn't be re-made. |
+| [`design/HARDWARE.md`](design/HARDWARE.md) | What to buy, how it goes together, the pin map — and the bring-up runbook for first power-on. |
+| [`design/PI_SIDE.md`](design/PI_SIDE.md) | The other end of the link: what's confirmed about the Pi and mesh, and what still needs checking on a real node. |
+
+[`CLAUDE.md`](CLAUDE.md) has the working rules for anyone (human or agent) changing the firmware.
 
 ## Flashing (no toolchain needed)
 
@@ -47,12 +83,11 @@ something a push can turn on by itself.
 
 `idf.py build` passes end-to-end against ESP-IDF v5.5.1 and the real `morsemicro/halow`
 component (verified in CI-less form by actually running the build, not just reading code -
-see `design/PROGRESS.md` for the full list of what that surfaced and fixed: console peripheral,
-IDF version floor, the real HaLow security enum, board pin/BCF/chip config, partition size).
+see `design/ROADMAP.md` for current status).
 **Not yet done, and real-hardware-only from here:**
 
 - **Pi-side HaLow AP config** (SSID/security mode) is unconfirmed — see
-  `design/pi_side_reference.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
+  `design/PI_SIDE.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
   defaults (see `gwcfg-*` console commands below). `gwcfg-scan` (or the web UI's scan button) will
   tell you what the Pi is actually advertising.
 - **`CONFIG_HALOW_COUNTRY_CODE`** must match the Pi's regulatory domain. Local from-source builds
@@ -61,9 +96,9 @@ IDF version floor, the real HaLow security enum, board pin/BCF/chip config, part
   `gwcfg-*` can set at runtime.
 - Nothing has been flashed or run on physical hardware - a compiling build isn't a working
   radio link. Association/DHCP/NAT/CoT-relay behavior on real Pi + XIAO hardware is still
-  unverified (`design/BRINGUP.md` walks through proving each one).
+  unverified (`design/HARDWARE.md` Part 2 walks through proving each one).
 - **No web UI authentication and no OTA delivery.** Both are designed, neither is built, and the
-  first blocks the second - see `design/FEATURES.md`.
+  first blocks the second - see `design/ROADMAP.md`.
 
 ## Building
 
@@ -109,7 +144,7 @@ Reboot after saving (either transport) for uplink/SoftAP changes to take effect.
 ## Diagnosing a node
 
 The bring-up instruments, in the order you'd reach for them - full procedure in
-[`design/BRINGUP.md`](design/BRINGUP.md).
+[`design/HARDWARE.md`](design/HARDWARE.md).
 
 **The on-board LED**, which needs neither a cable nor a phone:
 
@@ -163,11 +198,8 @@ country-configs/
 .github/workflows/
 └── build-firmware.yml   builds one firmware per region + deploys docs/ to GitHub Pages on push
 design/
-├── HARDWARE.md          BOM, board pairing, pin map, antennas, power - read before flashing
-├── BRINGUP.md           first-power runbook: what to run, what each failure means
-├── DESIGN.md            full design document
-├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link
-├── TECHNICAL_REVIEW.md  pre-hardware review: findings, fixes, and the open OTA decision
-├── FEATURES.md          what isn't built yet, what each involves, and in what order
-└── PROGRESS.md          current status, build-order checklist, and what's next
+├── ROADMAP.md           status, checklist, what's not built yet, settled decisions
+├── HARDWARE.md          BOM, pin map, antennas, power + the bring-up runbook
+└── PI_SIDE.md           the Pi/mesh end of the link: confirmed vs. still to verify
+CLAUDE.md                working rules for anyone changing the firmware
 ```

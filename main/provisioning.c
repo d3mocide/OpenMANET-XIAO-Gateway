@@ -57,14 +57,14 @@ void provisioning_get_defaults(gw_config_t *cfg)
 
     strlcpy(cfg->node_id, "xiao-gw-01", sizeof(cfg->node_id));
 
-    /* Placeholder uplink values - DESIGN.md §6.3 flags the real SSID/
+    /* Placeholder uplink values - design/PI_SIDE.md flags the real SSID/
      * security mode as unconfirmed against a live Pi. Must be set via
      * `gwcfg-set-uplink` (or reflashed defaults) before first deployment. */
     strlcpy(cfg->uplink.ssid, "openmanet-halow", sizeof(cfg->uplink.ssid));
     cfg->uplink.psk[0] = '\0';
     cfg->uplink.security = GW_SECURITY_OPEN;
 
-    /* Local client-facing SoftAP (DESIGN.md §4.2).
+    /* Local client-facing SoftAP.
      *
      * 172.16.50.0/24, not 192.168.x: this subnet has to coexist with whatever
      * the phone or tablet was last attached to, and with the mesh subnet on
@@ -84,7 +84,7 @@ void provisioning_get_defaults(gw_config_t *cfg)
     strlcpy(cfg->softap.gateway, "172.16.50.1", sizeof(cfg->softap.gateway));
     strlcpy(cfg->softap.netmask, "255.255.255.0", sizeof(cfg->softap.netmask));
 
-    /* ATAK CoT multicast group (DESIGN.md §4.3/§5.4). */
+    /* ATAK CoT multicast group. */
     strlcpy(cfg->cot.group, "239.2.3.1", sizeof(cfg->cot.group));
     cfg->cot.port = 6969;
 }

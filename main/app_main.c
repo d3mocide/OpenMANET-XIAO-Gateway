@@ -26,7 +26,7 @@ static bool s_datapath_up = false;
 /* Brings up NAT + the CoT relay the first time the HaLow uplink gets an IP.
  *
  * Known v1 limitation: if a later reconnect gets a *different* IP, NAT/CoT
- * relay aren't re-initialized against it - see DESIGN.md §4.3 for the
+ * relay aren't re-initialized against it - see design/ROADMAP.md for the
  * NAT-vs-route tradeoff this is part of.
  *
  * The "did this already" flag is set only once both pieces actually succeeded.
@@ -103,7 +103,7 @@ void app_main(void)
     }
 
     /* SoftAP first: it doesn't depend on the uplink and should be usable
-     * standalone (DESIGN.md §8 build order, step 3). */
+     * standalone - it's the natural first hardware test. */
     err = downlink_softap_init(&s_cfg.softap);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "SoftAP bring-up failed: %s", esp_err_to_name(err));
@@ -116,7 +116,7 @@ void app_main(void)
     }
 
     /* Same config, second transport: reachable at the SoftAP's IP once
-     * connected to it (DESIGN.md §5.6). The SoftAP netif is passed so the
+     * connected to it. The SoftAP netif is passed so the
      * server can refuse requests arriving from the mesh over the uplink -
      * these endpoints are unauthenticated. */
     err = web_ui_start(&s_cfg, downlink_softap_get_netif());

@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-/* Starts the ATAK CoT multicast relay (DESIGN.md §4.3/§5.4): joins the
+/* Starts the ATAK CoT multicast relay: joins the
  * configured group/port on both netif_a and netif_b via a single socket,
  * and bidirectionally forwards datagrams between them. Uses IP_PKTINFO to
  * determine which interface a datagram actually arrived on rather than
@@ -23,7 +23,7 @@ extern "C" {
 esp_err_t cot_relay_start(esp_netif_t *netif_a, esp_netif_t *netif_b, const gw_cot_config_t *cfg);
 
 /* Sends data to the CoT group on both interfaces as if it originated
- * locally - the generic send primitive DESIGN.md §5.5 calls for, so a
+ * locally - the generic send primitive the self-beacon will need, so a
  * future self-beacon (GPS/battery/status) can reuse this path instead of
  * needing separate code. Not yet called anywhere; no self-beacon exists
  * yet. */
