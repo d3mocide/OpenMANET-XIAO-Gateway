@@ -1,7 +1,7 @@
 # Pi-side reference
 
 What the XIAO gateway firmware needs to interoperate with, extracted from
-[`DESIGN.md`](../DESIGN.md) §2/§6 so it doesn't get lost in a longer
+[`DESIGN.md`](DESIGN.md) §2/§6 so it doesn't get lost in a longer
 document. Update this file (and cite the source) whenever one of the open
 items below gets confirmed against a real node.
 

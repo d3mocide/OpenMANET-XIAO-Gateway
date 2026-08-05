@@ -10,14 +10,16 @@ node.
 client (phone/tablet/ATAK) → Wi-Fi → XIAO SoftAP → IP fwd/NAT → HaLow STA → HaLow AP → Pi → mesh
 ```
 
-See [`DESIGN.md`](DESIGN.md) for the full design (network architecture, hardware choices, the
-NAT-vs-routed tradeoff, build order) and [`docs/pi_side_reference.md`](docs/pi_side_reference.md)
-for what's confirmed vs. still-to-verify about the Pi side of the link.
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the full design (network architecture, hardware
+choices, the NAT-vs-routed tradeoff, build order), [`docs/pi_side_reference.md`](docs/pi_side_reference.md)
+for what's confirmed vs. still-to-verify about the Pi side of the link, and
+[`docs/PROGRESS.md`](docs/PROGRESS.md) for current status and what's next - start there if
+you're picking this project back up.
 
 ## Status
 
-Initial firmware skeleton per `DESIGN.md` §7/§8. Structurally complete, but two things are not
-yet real:
+Initial firmware skeleton per `docs/DESIGN.md` §7/§8. Structurally complete, but two things are
+not yet real (see `docs/PROGRESS.md` for the full checklist):
 
 - **HaLow STA uplink** (`main/uplink_halow.c`): the actual `morsemicro/halow` component calls
   are stubbed out (clean-compiling, return `ESP_ERR_NOT_SUPPORTED`) rather than guessed against
@@ -71,6 +73,7 @@ main/
 ├── ip_forward_nat.c     NAPT between the uplink and SoftAP netifs
 └── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
 docs/
-└── pi_side_reference.md confirmed vs. open questions about the Pi side of the link
-DESIGN.md                full design document
+├── DESIGN.md            full design document
+├── pi_side_reference.md confirmed vs. open questions about the Pi side of the link
+└── PROGRESS.md          current status, build-order checklist, and what's next
 ```
