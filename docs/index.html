@@ -142,6 +142,34 @@
 
   .panel strong { color: var(--color-accent); }
 
+  .region-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.5rem 0 0;
+  }
+  .region-picker label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .region-picker select {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-ink);
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 3px;
+    padding: 0.4rem 0.6rem;
+  }
+  .region-picker select:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
   esp-web-install-button { display: block; margin: 1.75rem 0; }
 
   .flash-btn {
@@ -236,7 +264,14 @@
   typed into this page.
 </div>
 
-<esp-web-install-button manifest="./manifest.json">
+<div class="region-picker">
+  <label for="region">Region</label>
+  <select id="region">
+    <option value="us/manifest.json">United States</option>
+  </select>
+</div>
+
+<esp-web-install-button manifest="us/manifest.json">
   <button slot="activate" class="flash-btn">Connect &amp; Flash</button>
   <span slot="unsupported" class="unsupported">
     Your browser doesn't support Web Serial. Use Chrome or Edge on desktop.
@@ -267,12 +302,20 @@
 
 <h2>Regulatory / country code</h2>
 <p>
-  The HaLow radio's legal channel list is set at build time, not from this page or the on-device
-  config UI. If the firmware served here doesn't already have your country configured, it won't
-  associate — see <code>sdkconfig.defaults</code>'s <code>CONFIG_HALOW_COUNTRY_CODE</code> in the repo.
+  Each region above ships its own build with the legal channel list baked in at compile time
+  (<code>CONFIG_HALOW_COUNTRY_CODE</code>) — pick your region before flashing so the radio comes up
+  on the right regulatory domain; it can't be changed afterward from this page or the on-device
+  config UI. Building from source instead? <code>sdkconfig.defaults</code> ships the placeholder
+  <code>"??"</code> — set a real ISO 3166-1 country code yourself before flashing.
 </p>
 
 <footer>Firmware built automatically from the repository's <code>main</code> branch.</footer>
+
+<script>
+  document.getElementById("region").addEventListener("change", (event) => {
+    document.querySelector("esp-web-install-button").setAttribute("manifest", event.target.value);
+  });
+</script>
 
 </body>
 </html>
