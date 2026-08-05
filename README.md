@@ -33,7 +33,7 @@ not yet real (see `docs/PROGRESS.md` for the full checklist):
 ## Building
 
 Requires [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/get-started/)
-(v5.1+) with the ESP32-S3 target.
+v5.4.4+ (`morsemicro/halow`'s own minimum) with the ESP32-S3 target.
 
 ```sh
 idf.py set-target esp32s3
