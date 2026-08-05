@@ -8,7 +8,8 @@ extern "C" {
 #endif
 
 /* Sets up address translation so SoftAP clients reach the mesh through the
- * HaLow uplink (DESIGN.md §4.3, v1 NAT-for-general-traffic recommendation).
+ * HaLow uplink. See design/ROADMAP.md "Settled decisions" for why v1 NATs
+ * general traffic and relays CoT multicast separately.
  *
  * Three things happen here, and all three are required for a client behind the
  * SoftAP to have working connectivity:

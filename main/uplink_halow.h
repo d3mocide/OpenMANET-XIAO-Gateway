@@ -21,9 +21,9 @@ typedef void (*uplink_halow_state_cb_t)(bool connected, void *ctx);
 /* Where the uplink actually is, as opposed to the binary "usable / not usable"
  * the state callback reports.
  *
- * The distinction matters during bring-up: DESIGN.md §8 treats association
- * (step 1) and the DHCP lease (step 2) as separate milestones with completely
- * different failure causes - a stuck ASSOCIATING points at country code,
+ * The distinction matters during bring-up: association (step 1) and the DHCP
+ * lease (step 2) are separate milestones with completely different failure
+ * causes - a stuck ASSOCIATING points at country code,
  * security mode, SSID or RF; a stuck ASSOCIATED points at DHCP on the Pi. A
  * single "connected" flag collapses those two into one indistinguishable
  * "it doesn't work". */
@@ -51,7 +51,7 @@ typedef struct {
 typedef void (*uplink_scan_cb_t)(const uplink_scan_result_t *result, void *ctx);
 
 /* One-time radio/netif bring-up. Safe to call even if the HaLow component
- * integration isn't wired up yet (DESIGN.md build order §8 step 3 expects
+ * integration isn't wired up yet (the bring-up runbook expects
  * SoftAP/NAT/CoT relay to be exercisable before HaLow STA works) - on
  * failure this logs and returns an error, it does not abort. Check
  * uplink_halow_is_ready() before calling anything else here. */
@@ -91,7 +91,8 @@ int32_t uplink_halow_get_rssi(void);
  *
  * This answers the question nothing else in this firmware can: "is the Pi's
  * HaLow AP visible at all, on what channel, at what strength?" - which is
- * DESIGN.md §8 step 0/1, and previously required a Pi-side capture to answer.
+ * bring-up steps 1-2 in design/HARDWARE.md, and previously required a
+ * Pi-side capture to answer.
  *
  * Note it scans the channel list derived from CONFIG_HALOW_COUNTRY_CODE. An AP
  * on a channel outside this build's regulatory domain will not be found, so an

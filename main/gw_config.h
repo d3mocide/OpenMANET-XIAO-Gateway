@@ -40,14 +40,14 @@ extern "C" {
 #define GW_CONFIG_VERSION 2u
 
 /* Security modes the HaLow uplink STA can be configured for. Must match
- * whatever the associated Pi's HaLow AP is running (DESIGN.md §4.1/§6.3) -
+ * whatever the associated Pi's HaLow AP is running (design/PI_SIDE.md) -
  * unknown at scaffold time, so this is provisioned, not hardcoded.
  *
  * NOTE: unlike legacy 2.4GHz Wi-Fi, HaLow (802.11ah) has no WPA2-PSK mode -
  * confirmed against the real morsemicro/halow SDK (enum mmwlan_security_type
  * in mmwlan.h only defines MMWLAN_OPEN / MMWLAN_OWE / MMWLAN_SAE). The
  * design doc's original "open / WPA2-PSK / WPA3-SAE" (§4.1) was wrong on
- * this point; corrected here and in design/pi_side_reference.md. */
+ * this point; corrected here and in design/PI_SIDE.md. */
 typedef enum {
     GW_SECURITY_OPEN = 0,
     GW_SECURITY_OWE,
@@ -62,7 +62,7 @@ typedef struct {
      * scans within the regulatory channel list derived from
      * CONFIG_HALOW_COUNTRY_CODE, which is a *build-time* Kconfig value
      * (sdkconfig.defaults), not something this NVS-provisioned struct can
-     * override at runtime. See design/pi_side_reference.md open item 3. */
+     * override at runtime. See design/PI_SIDE.md "Still to verify" item 3. */
 } gw_uplink_config_t;
 
 typedef struct {

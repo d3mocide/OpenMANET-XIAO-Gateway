@@ -22,7 +22,7 @@
 #
 # Adopting OTA *update delivery* is a separate, still-open piece of work - the
 # layout is in place first because retrofitting a partition table onto already
-# deployed units costs a USB cable per unit. See design/TECHNICAL_REVIEW.md
+# deployed units costs a USB cable per unit. See design/ROADMAP.md
 # "Deferred: OTA" for what still has to land (notably authentication before any
 # firmware-upload endpoint exists) and why rollback is intentionally not
 # enabled yet.

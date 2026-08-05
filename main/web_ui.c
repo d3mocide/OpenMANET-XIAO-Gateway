@@ -80,7 +80,7 @@ static bool peer_ipv4(httpd_req_t *req, uint32_t *out_addr)
 /* httpd_start() binds every interface, so once the HaLow uplink is up these
  * endpoints would otherwise be reachable from the entire mesh - including
  * unauthenticated POST /api/config and POST /api/reboot. There's no auth on
- * this UI by design (DESIGN.md §5.6), so the SoftAP subnet *is* the
+ * this UI yet (design/ROADMAP.md item 1), so the SoftAP subnet *is* the
  * authorization boundary: enforce it explicitly rather than relying on the
  * mesh being friendly.
  *
@@ -219,7 +219,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 
     /* "state" is the finer-grained version, and the one that makes this panel
      * a bring-up instrument rather than a health light: "searching" and
-     * "associated, no lease" are DESIGN.md §8 steps 1 and 2 failing
+     * "associated, no lease" are bring-up steps 1 and 2 failing
      * respectively, with entirely different causes (RF/country/credentials vs.
      * DHCP on the Pi). A single boolean cannot tell them apart. */
     uplink_link_state_t link_state = uplink_halow_get_link_state();
@@ -250,7 +250,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(sys, "heap_min", esp_get_minimum_free_heap_size());
     /* Build-time regulatory domain. Worth surfacing because it cannot be
      * changed at runtime and a mismatch with the mesh Pi is the failure that
-     * blocks association outright (design/pi_side_reference.md item 3). */
+     * blocks association outright (design/PI_SIDE.md item 3). */
     cJSON_AddStringToObject(sys, "country", CONFIG_HALOW_COUNTRY_CODE);
 
     const esp_app_desc_t *desc = esp_app_get_description();
