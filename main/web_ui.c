@@ -298,6 +298,10 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     cJSON_AddStringToObject(uplink, "state", uplink_halow_link_state_name(link_state));
     cJSON_AddBoolToObject(uplink, "associated", link_state >= UPLINK_LINK_ASSOCIATED);
     cJSON_AddBoolToObject(uplink, "radio_ready", uplink_halow_is_ready());
+    /* Lets the page tell "you haven't set this up yet" apart from "setup is
+     * done and something is wrong", which are the same shape of empty status
+     * panel but need opposite advice from the operator. */
+    cJSON_AddBoolToObject(uplink, "configured", link_state != UPLINK_LINK_UNCONFIGURED);
 
     /* Null rather than a sentinel number when unknown, so the page can render
      * "-" instead of a misleading -2147483648. */

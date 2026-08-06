@@ -253,11 +253,27 @@ Recorded so they aren't relitigated, and so they aren't accidentally undone.
   `sdkconfig.defaults` and [`HARDWARE.md`](HARDWARE.md). The correct way to get power-save back is
   to populate R10/R17.
 
+- **A node with no uplink configured does not start the reconnect loop.** "Nobody has told this
+  node which AP to join" and "the AP we were told about isn't answering" are different situations
+  with opposite advice, and the firmware used to report both as `searching` while burning 15-second
+  association attempts against a placeholder SSID it shipped with. Now the defaults carry *no*
+  uplink, an empty SSID means "not configured" (`gw_uplink_is_configured()`), and that state has
+  its own LED pattern, status string and web-UI banner. It also keeps the radio free for scanning,
+  which is what an operator is doing at that exact moment. Derived from the SSID rather than a
+  separate flag or a user-facing toggle: the two can never disagree, and there is no switch that
+  can strand a configured node in the field.
+
 ### Observability
 
 - **Flash core dumps are on** (64 KB partition, ELF format). Bring-up means crashes happen
   unattended and away from a terminal; without this a panic leaves nothing behind. Flash cost is
   trivial against 8 MB.
+- **The reset reason is logged at every boot, into the RAM log ring.** Hardware bring-up produced a
+  reboot loop on a node that could not be powered from a PC's USB port — so there was no serial
+  console, and every instrument that survives a reset lives in flash or on the far side of a cable.
+  `esp_reset_reason()` costs one line and separates a brownout from a panic from a watchdog, which
+  is the first fork in that diagnosis. The core-dump summary is logged next to it but labelled
+  separately: it is the last panic *ever* recorded, not necessarily this boot's.
 - **Link state is four states, not a boolean.** "Not associated" and "associated but no lease" are
   different subsystems failing, with different fixes. Collapsing them was the single biggest
   diagnosability gap the firmware had.
