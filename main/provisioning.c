@@ -313,8 +313,22 @@ static int cmd_gwcfg_set_node(int argc, char **argv)
         printf("usage: gwcfg-set-node <node_id>\n");
         return 1;
     }
+
+    /* Scratch-copy + validate, like every other setter: rejecting here, next
+     * to the edit, beats a "not saved: ..." from gwcfg-save minutes later
+     * with no hint about which command caused it. */
     provisioning_config_lock();
-    strlcpy(s_cfg->node_id, argv[1], sizeof(s_cfg->node_id));
+    gw_config_t work = *s_cfg;
+    strlcpy(work.node_id, argv[1], sizeof(work.node_id));
+
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
     provisioning_config_unlock();
     return 0;
 }
@@ -325,10 +339,25 @@ static int cmd_gwcfg_set_uplink(int argc, char **argv)
         printf("usage: gwcfg-set-uplink <ssid> <psk|-> <open|owe|sae>\n");
         return 1;
     }
+
+    /* Validated against a scratch copy so a rejected value never lands in
+     * the live config - same discipline as gwcfg-set-softap and the web
+     * UI's POST handler. Catches e.g. SAE with no passphrase immediately
+     * instead of at gwcfg-save time. */
     provisioning_config_lock();
-    strlcpy(s_cfg->uplink.ssid, argv[1], sizeof(s_cfg->uplink.ssid));
-    strlcpy(s_cfg->uplink.psk, strcmp(argv[2], "-") == 0 ? "" : argv[2], sizeof(s_cfg->uplink.psk));
-    s_cfg->uplink.security = provisioning_parse_security(argv[3]);
+    gw_config_t work = *s_cfg;
+    strlcpy(work.uplink.ssid, argv[1], sizeof(work.uplink.ssid));
+    strlcpy(work.uplink.psk, strcmp(argv[2], "-") == 0 ? "" : argv[2], sizeof(work.uplink.psk));
+    work.uplink.security = provisioning_parse_security(argv[3]);
+
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
     provisioning_config_unlock();
     printf("uplink config updated in RAM; run 'gwcfg-save' then reboot to apply\n");
     return 0;

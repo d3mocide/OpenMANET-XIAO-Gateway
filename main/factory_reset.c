@@ -116,7 +116,11 @@ esp_err_t factory_reset_start(gw_config_t *cfg)
         return err;
     }
 
-    if (xTaskCreate(factory_reset_task, "factory_reset", 3072, NULL, 2, NULL) != pdPASS) {
+    /* 4096, not the bare minimum a button poller needs: do_factory_reset()
+     * runs the full provisioning_save() -> NVS blob write + commit path on
+     * this stack, and this task is the recovery path of last resort - a stack
+     * overflow here bricks the one no-cable escape hatch a deployed node has. */
+    if (xTaskCreate(factory_reset_task, "factory_reset", 4096, NULL, 2, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
 
