@@ -47,8 +47,8 @@ jobs:
 
       # Builds inside the official espressif/idf Docker image for the pinned
       # version - avoids the local-toolchain gotchas found setting this up by
-      # hand (see design/PROGRESS.md): missing libusb for openocd, the Python
-      # venv step silently not completing, etc.
+      # hand: missing libusb for openocd, the Python venv step silently not
+      # completing, etc.
       - name: Build firmware (country=${{ matrix.country }})
         uses: espressif/esp-idf-ci-action@v1
         with:
