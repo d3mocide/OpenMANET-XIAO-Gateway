@@ -24,5 +24,11 @@ idf_component_register(
         app_update
         esp_driver_gpio
         json
+    PRIV_REQUIRES
+        # app_main.c reports the stored core dump's crashing task and backtrace
+        # at boot (esp_core_dump.h). PRIV_ rather than REQUIRES because no
+        # header this component installs exposes the type - it is an
+        # implementation detail of app_main.c.
+        espcoredump
     EMBED_FILES "web_ui.html"
 )
