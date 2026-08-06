@@ -55,7 +55,7 @@ not by re-reading this repo. Assume the same class of error exists elsewhere. Se
 | Factory reset | `main/factory_reset.c` | 5 s BOOT-button hold restores defaults and reboots; LED acknowledges at 1.5 s. |
 | Log ring buffer | `main/log_buffer.c` | `esp_log_set_vprintf` tee into a 6 KB RAM ring, served at `/api/log`. Chains to the previous handler, so serial output is unaffected. |
 | App wiring | `main/app_main.c` | Brings up log buffer, LED, factory-reset watcher, SoftAP, console and web UI immediately; NAT + CoT relay once the uplink holds a DHCP lease, retrying on the next reconnect if that fails. Skips the reconnect task entirely if the radio never initialized. |
-| Web flasher + CI | `docs/`, `country-configs/`, `.github/workflows/` | ESP Web Tools page with a region picker; GitHub Actions builds one firmware per region (9 regdb-defined domains) and deploys to Pages. Builds on PRs too (US only). |
+| Web flasher + CI | `docs/`, `.github/workflows/` | ESP Web Tools page, single US build. GitHub Actions builds `sdkconfig.defaults` unmodified and deploys to Pages; PRs build but don't deploy. |
 
 Everything above compiles clean. **Steps 1 and 4 have now passed on hardware** (see the checklist);
 the rest is unrun.
@@ -68,8 +68,8 @@ runbook. **The step numbers are shared** — if you renumber one, renumber the o
 "step 5 passed" stops meaning one thing.
 
 - [ ] **Step 0** — Confirm the Pi's HaLow radio config: AP mode, SSID, security mode, country,
-      DHCP behaviour. See [`PI_SIDE.md`](PI_SIDE.md) "Still to verify". Flash the region build that
-      matches the Pi's regulatory domain.
+      DHCP behaviour. See [`PI_SIDE.md`](PI_SIDE.md) "Still to verify". The Pi has to be on **US**
+      (902–928 MHz) — that's the only domain this hardware can reach.
 - [x] **Step 1** — Radio responds over SPI (`gwcfg-radio`). **Passed.** On a Seeed XIAO ESP32-S3 +
       WM6108 (Quectel FGH100M-H), the boot banner reports BCF API 8.0.0, morselib 2.11.2, Morse
       firmware 1.17.8 and chip ID `0x0306`, so the `CONFIG_MM_*` pin map, the BCF file and the chip
@@ -237,10 +237,16 @@ Recorded so they aren't relitigated, and so they aren't accidentally undone.
   and esp_netif's own 192.168.4.1 default; an overlap between a client's remembered network and
   this one is very hard to diagnose in the field. Every node can safely use the same subnet — each
   NATs behind its own uplink address.
+- **US-only, 902–928 MHz — and that is a hardware limit.** The module is a Quectel FGH100M-H, a
+  902–928 MHz part, and the BCF the firmware loads (`bcf_fgh100mhaamd.bin`) is named "FGH100M-H
+  (US)" upstream; it carries real calibration for US alone. The nine-region build matrix that used
+  to live in `country-configs/` was checking `mmregdb`'s channel tables and nothing else — four of
+  those regions were unreachable frequencies and two had no BCF section at all, all failing
+  silently. Deleted. `design/HARDWARE.md` "Regulatory domain" has the section-by-section evidence.
+  Don't re-add a region without a BCF that covers it.
 - **Region is build-time and cannot be made runtime-configurable.** The SDK reads
   `CONFIG_HALOW_COUNTRY_CODE` from Kconfig before the radio scans; there is no per-connection
-  channel argument in the STA connect API. The web flasher's region picker is the mechanism, by
-  design.
+  channel argument in the STA connect API. It is now fixed at `"US"` in `sdkconfig.defaults`.
 - **`CONFIG_HALOW_PS_MODE=n`, and it is not in the vendor's board file.** The component defaults it
   *on* whenever `CONFIG_MM_WAKE`/`CONFIG_MM_BUSY` are set — which upstream's own Seeed board config
   does — but its help text requires those pins to be physically connected, and on the HAT

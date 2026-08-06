@@ -68,12 +68,16 @@ Check with `uci show wireless`, `iw dev`, `iw list`, `batctl if` on the Pi.
    Also worth noting **whether the Pi's DHCP offers a DNS server** — the XIAO copies the uplink's
    DNS into its own clients' leases, so if the Pi offers none, phones behind the XIAO get IP
    connectivity with no name resolution. The firmware logs a specific warning for this case.
-3. **Regulatory / country code** (`morse-regdb`) the Pi's HaLow radio uses. **Unlike 1/2/4 this is
-   not NVS-provisioned on the XIAO side** — confirmed by reading `mmhalow_init()` in the real SDK:
-   there is no per-connection channel argument in the STA connect API at all. The country code is
-   a *build-time* Kconfig value (`CONFIG_HALOW_COUNTRY_CODE`) that determines the STA's legal
-   channel list before it ever scans. It must match the Pi's domain and be **reflashed** —
-   `gwcfg-*` cannot fix a wrong value at runtime.
+3. **Regulatory / country code** (`morse-regdb`) the Pi's HaLow radio uses. **This one has to be
+   fixed on the Pi, not the XIAO: the XIAO is US / 902–928 MHz and cannot be built otherwise.** Its
+   module is a Quectel FGH100M-H, a 902–928 MHz part whose BCF carries US calibration only — see
+   [`HARDWARE.md`](HARDWARE.md) "Regulatory domain". So the Pi's HaLow radio must run **US**.
+
+   **Unlike 1/2/4 this is not NVS-provisioned on the XIAO side** — confirmed by reading
+   `mmhalow_init()` in the real SDK: there is no per-connection channel argument in the STA connect
+   API at all. The country code is a *build-time* Kconfig value (`CONFIG_HALOW_COUNTRY_CODE`) that
+   determines the STA's legal channel list before it ever scans, and `gwcfg-*` cannot change it at
+   runtime.
 
    A mismatch is silent and looks like the AP being down. `gwcfg-scan` prints the region it
    scanned for exactly this reason.

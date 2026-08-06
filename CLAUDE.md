@@ -52,8 +52,8 @@ idf.py build
 - **Never pipe `idf.py build` through `tail`/`head`** to shorten output — the shell exit code then
   reflects the pipe, not the build, and it will claim success on real failures. Grep the log for
   `error:`/`FAILED` instead of trusting `$?`.
-- CI builds every push to `main` (all 9 regions) and every PR (US only), in the official
-  `espressif/idf` Docker image.
+- CI builds every push to `main` and every PR (one US build — see the region note below), in the
+  official `espressif/idf` Docker image.
 
 Current baseline: zero errors, zero warnings, binary ~1.67 MB, 44% free in the 3 MB app slot.
 
@@ -77,8 +77,11 @@ them without reading it.
 - **Integer arithmetic for frequency formatting**, not `%f`. `CONFIG_LIBC_NEWLIB_NANO_FORMAT` is off
   today but is exactly the knob someone reaches for to shrink a binary, and the failure mode is
   garbage in the scan table during bring-up.
-- **`CONFIG_HALOW_COUNTRY_CODE` cannot be made runtime-configurable.** The SDK reads it from Kconfig
-  before the radio scans. The web flasher's region picker is the mechanism.
+- **`CONFIG_HALOW_COUNTRY_CODE` is fixed at `"US"` and cannot be made runtime-configurable.** The SDK
+  reads it from Kconfig before the radio scans. US isn't a default to be generalized later: the
+  FGH100M-H is a 902–928 MHz part and its BCF (`bcf_fgh100mhaamd.bin`) carries real calibration for
+  US only. The old nine-region matrix and `country-configs/` were deleted for that reason — see
+  `design/HARDWARE.md` "Regulatory domain".
 
 ## Conventions
 
@@ -101,7 +104,6 @@ them without reading it.
 main/           firmware (see README.md for the per-file table)
 design/         ROADMAP.md, HARDWARE.md, PI_SIDE.md — three docs, no more
 docs/           the ESP Web Tools browser flasher page (deployed to GitHub Pages)
-country-configs/ per-region CONFIG_HALOW_COUNTRY_CODE overrides for the CI matrix
 ```
 
 `design/` deliberately holds exactly three documents. Content that doesn't fit one of them probably

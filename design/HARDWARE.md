@@ -20,7 +20,7 @@ failure looks like a software problem.
 | Part | Exact item | Notes |
 |---|---|---|
 | MCU | **Seeed Studio XIAO ESP32-S3** | Not the C3/C6/C5 XIAO. The pin map, the BCF file and the SoftAP support all assume S3. |
-| HaLow radio | **Seeed XIAO WM6108** (Morse Micro MM6108) | The HaLow expansion board that mates with the XIAO footprint. |
+| HaLow radio | **Seeed XIAO WM6108** (Quectel FGH100M-H, Morse Micro MM6108) | The HaLow expansion board that mates with the XIAO footprint. **902–928 MHz — US only**; see "Regulatory domain". |
 | Antenna | 2.4 GHz antenna for the XIAO (supplied with it) **and** a sub-GHz antenna for the HaLow board | Two separate radios, two separate antennas. |
 | Power | USB-C, or a 3.7 V LiPo on the XIAO's battery pads | See "Power" below. |
 | Client devices | Any 2.4 GHz Wi-Fi phone/tablet (ATAK EUDs) | Nothing special required. |
@@ -273,17 +273,68 @@ involve. Irrelevant for a first hardware test; not irrelevant for a deployment.
 
 ## Regulatory domain
 
-The HaLow channel plan is a **build-time** setting (`CONFIG_HALOW_COUNTRY_CODE`), not something
-`gwcfg-*` or the web UI can change. It must match the domain the Pi's HaLow radio runs, or the two
-radios will never find each other even though both work perfectly.
+**This project is US-only: 902–928 MHz, `CONFIG_HALOW_COUNTRY_CODE="US"`.** That is a hardware
+limit, not a policy choice, and it is why `country-configs/` and the flasher's region picker no
+longer exist — CI builds `sdkconfig.defaults` unmodified.
 
-- Local from-source builds default to **US** — a working fallback, not a recommendation.
-- CI builds one firmware per region; the web flasher's region picker is where the choice is
-  actually made, per user, at flash time.
-- Buildable regions are exactly the nine Morse Micro's `mmregdb` ships channel tables for:
-  **US, CA, EU, GB, AU, NZ, JP, KR, IN**.
+The HaLow channel plan is a **build-time** setting, not something `gwcfg-*` or the web UI can
+change: `mmhalow_init()` reads it straight from Kconfig ([`halow/mmhalow.c`][halow-c] L191). It must
+match the domain the Pi's HaLow radio runs, or the two radios never find each other even though
+both work perfectly.
 
-A mismatch here is silent: the radio comes up, the scan returns nothing, everything looks broken.
+### Why not the other eight regions
+
+An earlier version of this repo built nine regions — US, CA, EU, GB, AU, NZ, JP, KR, IN — on the
+reasoning that those are exactly the domains Morse Micro's `mmregdb` ships channel tables for. That
+reasoning was checking the wrong layer. Three things have to agree, and only `mmregdb` covers all
+nine:
+
+1. **The module's radio band.** The Quectel **FGH100M-H** is a 902–928 MHz part ([Quectel product
+   page][fgh-product]; Seeed's own spec table gives the same). Seeed's wiki states the board is
+   "currently only available for North America" and to use `US`.
+2. **The BCF's per-region calibration.** `CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin"` is listed in
+   Morse Micro's [`morse-firmware/WHENCE.md`][whence] (L51-54) as **"FGH100M-H (US)"**. The `-H`
+   part has no EU or JP sibling; the EU/JP BCFs there (`bcf_fgh100maamd.bin`,
+   `bcf_fgh100mjaamd.bin`) are for the *non*-H FGH100M.
+3. **`mmregdb`'s channel list**, selected by `CONFIG_HALOW_COUNTRY_CODE`.
+
+Dumping the BCF's ELF sections (`readelf -S`) shows what layer 2 actually contains — the payload
+sizes are the tell, and only two regions have one worth the name:
+
+| Region | `mmregdb` channels | Within 902–928 MHz? | `.regdom_*` in our BCF |
+|---|---|---|---|
+| **US** | 902–928 | yes, all 48 | **126 bytes of real calibration** |
+| AU | 915–928 | yes, all | 72 bytes |
+| NZ | 915–928 | yes, all | empty stub (0-byte payload) |
+| JP | 920.5–927.5 | yes, all | empty stub |
+| KR | 917.5–930 | **no** — 3 of 16 channels sit above 928 | empty stub |
+| CA | 902–928 | yes, all | **section absent entirely** |
+| GB | 863–919.4 | **no** — 7 of 9 channels | **section absent entirely** |
+| EU | 863–868 | **no** — none | empty stub |
+| IN | 865–868 | **no** — none | empty stub |
+
+Both resulting failure modes are quiet, which is what made this worth pinning down:
+
+- **CA and GB** have no matching section, so `morse_bcf_load_mbin()` walks to `FIELD_TYPE_EOF`,
+  returns `-ERANGE` and logs `Possible malformed BCF file. Unable to find regdom section for 'CA'`
+  ([`firmware_mbin.c`][mbin] L493-551). That propagates up through `morse_firmware_init()`, which
+  retries three times and fails — but `mmhalow_init()` calls `(void)mmwlan_boot(&boot_args)` and
+  **discards the status** ([`halow/mmhalow.c`][halow-c] L198), so the firmware carries on believing
+  the radio is up.
+- **EU, IN, JP, KR, NZ** load a well-formed regdom with a zero-length payload — no board
+  calibration at all — and for EU and IN that sits on top of frequencies the front end cannot
+  reach in the first place.
+
+Either way the symptom is the one below: a scan that finds nothing. Not a build error, not a crash.
+
+[fgh-product]: https://www.quectel.com/product/wi-fi-halow-fgh100m-h/
+[whence]: https://github.com/morsemicro/morse-firmware
+[mbin]: https://github.com/morsemicro/mm-iot-sdk
+[halow-c]: https://github.com/MorseMicro/esp-halow/blob/main/halow/mmhalow.c
+
+### The symptom
+
+A domain mismatch is silent: the radio comes up, the scan returns nothing, everything looks broken.
 `gwcfg-scan` prints the region it scanned precisely so this can be told apart from an AP that is
 genuinely down.
 

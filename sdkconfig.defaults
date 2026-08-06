@@ -109,15 +109,20 @@ CONFIG_HALOW_PS_MODE=n
 # SSID/security it cannot be changed later via gwcfg-* at runtime, because
 # mmhalow_init() reads it directly from Kconfig.
 #
-# "US" is the default here rather than the component's invalid "??" placeholder
-# so that a from-source build produces a firmware that can actually bring the
-# radio up. It is a fallback, not a claim about any particular deployment: the
-# code has to match the regulatory domain the Pi's HaLow AP is running, and
-# that differs per operator.
+# "US" is not a fallback or a placeholder here - it is the only value this
+# hardware supports, and this line is now the single source of truth for it
+# (CI builds it unmodified; there is no country-configs/ layering any more).
 #
-# CI overrides this per region via country-configs/<CODE>.defaults, and the web
-# flasher's region picker is where a user selects theirs at flash time - so
-# this value only affects local from-source builds.
+# The module is a Quectel FGH100M-H, a 902-928 MHz part. The BCF pinned above,
+# CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin", is named "FGH100M-H (US)" in Morse
+# Micro's own morse-firmware/WHENCE.md (L53) - and that BCF carries a real
+# per-regdom calibration payload for US only. Setting a different code here does
+# not fail the build; it produces firmware whose radio never associates. See
+# design/HARDWARE.md "Regulatory domain" for the section-by-section evidence.
+#
+# Still a *build-time* setting - unlike uplink SSID/security it cannot be
+# changed later via gwcfg-* at runtime, because mmhalow_init() reads it directly
+# from Kconfig (halow/mmhalow.c L191).
 CONFIG_HALOW_COUNTRY_CODE="US"
 
 # --- Partition table: the default single-app table only allows a 1MB app

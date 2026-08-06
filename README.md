@@ -65,15 +65,18 @@ Web Serial - Chrome/Edge only) that flashes firmware built automatically by
 `main`. It only flashes firmware with placeholder config; see "Configuring a node" below for
 setting real values afterward - nothing is typed into the flasher page itself.
 
-The workflow builds one firmware binary per region (a build matrix over `country-configs/*.defaults`)
-with `CONFIG_HALOW_COUNTRY_CODE` baked in, since that's a build-time value the device can't be told
-at runtime. The flasher page has a region picker above the flash button - pick yours before
-flashing. Regions currently built: **US, CA, EU, GB, AU, NZ, JP, KR, IN** - exactly the 9 regulatory
-domains Morse Micro's `mmregdb` (upstream of `morsemicro/halow`) ships channel data for as of this
-writing. That list can't be freely extended to any country: a code with no upstream regdb entry
-won't have a real channel plan to build against. Adding a region once Morse Micro ships data for it
-is a new `country-configs/<CODE>.defaults` file (one line: `CONFIG_HALOW_COUNTRY_CODE="<CODE>"`)
-plus a matching matrix/dropdown entry.
+The workflow builds one binary, **US / 902-928 MHz**, with `CONFIG_HALOW_COUNTRY_CODE="US"` baked in
+from `sdkconfig.defaults` (a build-time value the device can't be told at runtime). There is no
+region picker, because there is nothing to pick: the XIAO HaLow board carries a Quectel
+**FGH100M-H**, a 902-928 MHz part whose board-calibration file - `bcf_fgh100mhaamd.bin`, the one
+`CONFIG_MM_BCF_FILE` pins - is named "FGH100M-H (US)" in Morse Micro's own `morse-firmware`
+manifest, and Seeed document the board as North America only.
+
+This repo used to build nine regions off `mmregdb`'s channel tables. That was checking the channel
+plan without checking the radio or the calibration data behind it: four of those regions have
+channels outside the module's band (EU and IN entirely, GB and KR partly), two have no BCF entry at
+all (CA, GB), and only US ships real calibration data. Every one of those failures is silent. See
+`design/HARDWARE.md` "Regulatory domain" for the evidence and the per-region table.
 
 **One-time setup this repo still needs**: GitHub Pages must be enabled with source "GitHub
 Actions" (repo Settings → Pages) before the workflow's deploy step will succeed - it isn't
@@ -90,10 +93,9 @@ see `design/ROADMAP.md` for current status).
   `design/PI_SIDE.md`. Nothing is hardcoded; it's all provisioned via NVS with placeholder
   defaults (see `gwcfg-*` console commands below). `gwcfg-scan` (or the web UI's scan button) will
   tell you what the Pi is actually advertising.
-- **`CONFIG_HALOW_COUNTRY_CODE`** must match the Pi's regulatory domain. Local from-source builds
-  default to `"US"` as a working fallback; the web flasher's region picker is where the real choice
-  is made per user, at flash time. Either way it's a build-time Kconfig value, not something
-  `gwcfg-*` can set at runtime.
+- **`CONFIG_HALOW_COUNTRY_CODE`** is fixed at `"US"` - the only domain this module's 902-928 MHz
+  front end and its BCF support - so the Pi's HaLow radio has to be on US too. It's a build-time
+  Kconfig value, not something `gwcfg-*` can set at runtime.
 - Nothing has been flashed or run on physical hardware - a compiling build isn't a working
   radio link. Association/DHCP/NAT/CoT-relay behavior on real Pi + XIAO hardware is still
   unverified (`design/HARDWARE.md` Part 2 walks through proving each one).
@@ -191,12 +193,9 @@ main/
 └── web_ui.html          embedded into the firmware image, not a separate filesystem
 partitions.csv           dual-OTA: 2x 3MB app slots + otadata + 64K coredump (app is at 0x20000)
 docs/
-└── index.html           ESP Web Tools browser flasher page, region picker + per-region manifest
-country-configs/
-└── {US,CA,EU,GB,AU,NZ,JP,KR,IN}.defaults
-                        per-region CONFIG_HALOW_COUNTRY_CODE override, layered onto sdkconfig.defaults
+└── index.html           ESP Web Tools browser flasher page (single US build)
 .github/workflows/
-└── build-firmware.yml   builds one firmware per region + deploys docs/ to GitHub Pages on push
+└── build-firmware.yml   builds the firmware + deploys docs/ to GitHub Pages on push
 design/
 ├── ROADMAP.md           status, checklist, what's not built yet, settled decisions
 ├── HARDWARE.md          BOM, pin map, antennas, power + the bring-up runbook

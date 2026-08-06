@@ -489,11 +489,13 @@ static int cmd_gwcfg_scan(int argc, char **argv)
     if (found == 0) {
         /* Said explicitly because the obvious conclusion ("the AP is off") is
          * only one of two, and the other one is a build-time setting that
-         * can't be fixed from this console. */
+         * can't be fixed from this console - or from a different build, since
+         * this hardware is 902-928 MHz only (design/HARDWARE.md "Regulatory
+         * domain"). The fix is on the Pi, so point there. */
         printf("note: only channels legal in '%s' were scanned. An AP on a channel outside\n"
-               "      this build's regulatory domain is invisible here - if the Pi uses a\n"
-               "      different country, reflash with a matching region build.\n",
-               CONFIG_HALOW_COUNTRY_CODE);
+               "      this regulatory domain is invisible here - this board is 902-928 MHz\n"
+               "      only, so the Pi's HaLow radio has to be on '%s' too.\n",
+               CONFIG_HALOW_COUNTRY_CODE, CONFIG_HALOW_COUNTRY_CODE);
     }
     return 0;
 }
