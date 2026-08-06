@@ -103,6 +103,13 @@ Design decisions are settled — see "Settled decisions" below. Implementation n
 
 - The existing `reject_if_remote()` gate **stays**. Auth is added to it, not a replacement — the
   two defend against different attackers.
+- Interim CSRF guards already exist in `web_ui.c` and also stay: the Host header must name the
+  SoftAP's own address (defeats DNS rebinding), and state-changing POSTs must declare
+  `Content-Type: application/json` (forces a CORS preflight on cross-origin requests, which the
+  server never approves). They close the drive-by-browser attack from a phone on the SoftAP, but
+  they are *not* authentication — a hostile client on the SoftAP can still do everything the UI
+  can until this item lands. If mDNS/captive portal (item 4) arrives first, the Host check must
+  learn those names or the UI becomes unreachable through them.
 - `gw_config_t` gains a salt, a hash, and a "password has been set" flag. That's a layout change:
   bump `GW_CONFIG_VERSION`.
 - `factory_reset.c` must clear the stored credential too, or a forgotten password survives the one
@@ -243,8 +250,12 @@ Recorded so they don't get "fixed" by accident.
   whether lease changes happen in practice, which hardware testing will answer. (A *failed* init
   does retry on the next reconnect — that was a bug and is fixed. Different thing.)
 - **No captive-portal DNS redirect.** A real UX gap, not a defect. See item 4 above.
-- **No web UI authentication.** See item 1. The SoftAP passphrase plus the subnet check is the
-  current boundary.
+- **No web UI authentication.** See item 1. The SoftAP passphrase plus the subnet check (and the
+  interim Host/Content-Type CSRF guards) is the current boundary.
+- **The web UI cannot clear a stored passphrase or switch the SoftAP to open.** A blank password
+  field means "keep current" - `GET /api/config` never echoes passphrases back, so an empty field
+  can't be distinguished from "clear it", and "keep" is the safe reading. The console can do it:
+  `gwcfg-set-softap <ssid> -`. The page says so next to the field.
 - **No OTA delivery.** Layout is ready, mechanism is blocked on auth by choice, not effort.
 - **The `CONFIG_MM_*` pin/BCF config has never been checked against a physical board.** It is a
   verbatim copy of upstream's config for this exact pairing, which is the best available evidence
