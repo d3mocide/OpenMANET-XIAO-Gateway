@@ -1,11 +1,16 @@
 # OpenMANET-XIAO-Gateway
 
-Firmware for a Seeed XIAO ESP32-S3 + Seeed XIAO WM6108 (HaLow, Morse Micro MM6108) node that acts
-as a mesh-connected access
-point for the [OpenMANET](https://github.com/d3mocide) project: phones/tablets/ATAK devices
+Firmware for a Seeed XIAO ESP32-S3 + Seeed XIAO WM6108 (HaLow) node that acts as a mesh-connected
+access point for the [OpenMANET](https://github.com/d3mocide) project: phones/tablets/ATAK devices
 associate to the XIAO's local 2.4GHz Wi-Fi AP, and the XIAO relays their IP traffic — including
 ATAK Cursor-on-Target (CoT) multicast — over a HaLow uplink into the mesh via a Raspberry Pi
 node.
+
+> **US only, 902–928 MHz.** The HaLow board carries a **Quectel FGH100M-H** (Morse Micro MM6108
+> silicon), a 902–928 MHz module that Seeed document as North America only. The regulatory domain
+> is compiled in — `CONFIG_HALOW_COUNTRY_CODE="US"` — and there is deliberately no other build.
+> See [`design/HARDWARE.md`](design/HARDWARE.md) "Regulatory domain" for why the other eight
+> `mmregdb` regions can't work on this hardware and why they fail silently.
 
 ```
 client (phone/tablet/ATAK) → Wi-Fi → XIAO SoftAP → IP fwd/NAT → HaLow STA → HaLow AP → Pi → mesh

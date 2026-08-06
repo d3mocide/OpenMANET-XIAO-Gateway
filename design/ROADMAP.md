@@ -14,6 +14,10 @@ belongs in git history, not here — this file describes the present and the pla
 
 ## Status at a glance
 
+**Target hardware: Seeed XIAO ESP32-S3 + Seeed XIAO WM6108, whose radio module is a Quectel
+FGH100M-H — 902–928 MHz, US only.** One build, `CONFIG_HALOW_COUNTRY_CODE="US"`; see "Settled
+decisions" and [`HARDWARE.md`](HARDWARE.md) "Regulatory domain".
+
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
 component: **zero errors, zero warnings**, binary ~1.67 MB, **44% free** in the 3 MB app
 slot on confirmed 8 MB flash. Verified by actually running the build, not by reading code.

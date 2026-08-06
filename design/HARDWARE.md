@@ -25,6 +25,22 @@ failure looks like a software problem.
 | Power | USB-C, or a 3.7 V LiPo on the XIAO's battery pads | See "Power" below. |
 | Client devices | Any 2.4 GHz Wi-Fi phone/tablet (ATAK EUDs) | Nothing special required. |
 
+### Three names for one thing
+
+Seeed's product page, Quectel's datasheet and Morse Micro's SDK each name a different layer of the
+same board, which makes searching for it confusing:
+
+| Name | What it actually refers to |
+|---|---|
+| **Seeed XIAO WM6108** | Seeed's name for the HAT (board `WI-FI_HALOW_FGH100M_EXT01` rev V3.0) |
+| **Quectel FGH100M-H** | the radio module soldered to that HAT — **902–928 MHz**, ordering code `FGH100MHAAMD`, which is where `CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin"` comes from |
+| **Morse Micro MM6108** | the silicon inside the Quectel module, and what `CONFIG_MM_CHIP_MM6108` selects |
+
+So "XIAO HaLow board", "FGH100M-H" and "MM6108" all describe this same node. Seeed's spec sheet
+lists the module's numbers (902–928 MHz, 802.11ah, STA, WPA3, 32.5 Mbps max PHY, `VBAT` 3.0–3.6 V /
+`VDD_IO` 1.62–3.6 V / `VDD_FEM` 3.0–5.25 V) — those are FGH100M-H figures, and the ones that
+constrain this firmware are the **band** ("Regulatory domain") and **`VDD_FEM`** ("Power").
+
 ### A naming trap worth avoiding
 
 Earlier drafts of these documents called the HaLow module the **"Wio-WM6180"**. That is a

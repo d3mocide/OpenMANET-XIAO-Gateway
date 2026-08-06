@@ -4,6 +4,9 @@ ESP-IDF firmware for a Seeed XIAO ESP32-S3 + Seeed XIAO WM6108 (HaLow) node: pho
 the XIAO's 2.4 GHz SoftAP, and it relays their traffic — including ATAK CoT multicast — over a
 HaLow uplink into an OpenMANET mesh via a Raspberry Pi.
 
+The HaLow module is a **Quectel FGH100M-H** (Morse Micro MM6108 silicon): **902–928 MHz, US only,
+one build**. Don't add regions — see the `CONFIG_HALOW_COUNTRY_CODE` entry below.
+
 Read [`design/ROADMAP.md`](design/ROADMAP.md) first. It has current status, the build-order
 checklist, what isn't built yet, and the settled decisions.
 
