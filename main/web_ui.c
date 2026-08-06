@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "web_ui.h"
 
@@ -105,15 +106,85 @@ static bool request_is_local(httpd_req_t *req)
     return (peer_addr & ip_info.netmask.addr) == (ip_info.ip.addr & ip_info.netmask.addr);
 }
 
+/* The request's Host header must be the SoftAP's own address. This is the
+ * anti-DNS-rebinding half of the interim CSRF defence (see reject_if_remote
+ * below): a rebinding attack resolves an attacker's hostname to this device's
+ * address, so the browser's requests are same-origin from its own point of
+ * view and arrive here with full local-peer credentials - but carrying
+ * Host: attacker.example, which is the one part of the request the attacker
+ * cannot forge away.
+ *
+ * Fails closed on a missing or oversized Host header (HTTP/1.1 requires one;
+ * every browser and curl sends it). If mDNS or a captive-portal hostname is
+ * ever added (ROADMAP item 4), this check must learn those names too or the
+ * UI becomes unreachable through them. */
+static bool host_is_self(httpd_req_t *req)
+{
+    if (s_softap_netif == NULL) {
+        return false;
+    }
+
+    esp_netif_ip_info_t ip_info;
+    if (esp_netif_get_ip_info(s_softap_netif, &ip_info) != ESP_OK || ip_info.ip.addr == 0) {
+        return false;
+    }
+
+    char self[16];
+    snprintf(self, sizeof(self), IPSTR, IP2STR(&ip_info.ip));
+
+    char host[32]; /* fits "255.255.255.255:65535"; anything longer isn't us */
+    if (httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
+        return false;
+    }
+
+    size_t self_len = strlen(self);
+    if (strncmp(host, self, self_len) != 0) {
+        return false;
+    }
+    /* Exact match, or the same address with an explicit :port. */
+    return host[self_len] == '\0' || host[self_len] == ':';
+}
+
 /* Guard for every handler. Returns true if the request should be refused,
- * having already sent the error response. */
+ * having already sent the error response.
+ *
+ * Checks two independent things: the peer must be on the SoftAP subnet
+ * (authorization boundary while there's no auth), and the Host header must
+ * name this device (anti-DNS-rebinding, see host_is_self). Both are interim
+ * hardening, not authentication - a hostile client on the SoftAP can still
+ * do everything the UI can until ROADMAP item 1 lands. */
 static bool reject_if_remote(httpd_req_t *req)
 {
     if (request_is_local(req)) {
+        if (host_is_self(req)) {
+            return false;
+        }
+        ESP_LOGW(TAG, "refused %s with a foreign Host header", req->uri);
+    } else {
+        ESP_LOGW(TAG, "refused %s from outside the SoftAP subnet", req->uri);
+    }
+    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "config is only reachable from the local Wi-Fi");
+    return true;
+}
+
+/* Guard for state-changing POSTs, after reject_if_remote. Requiring a JSON
+ * Content-Type makes a cross-origin fetch() a non-"simple" CORS request, so
+ * the browser sends an OPTIONS preflight first - which nothing here answers
+ * with Access-Control-Allow-* headers, so the POST itself is never sent.
+ * Without this, any web page open on a SoftAP client can fire a text/plain
+ * POST at these endpoints with no preflight at all (the handlers never read
+ * the Content-Type, so the body would parse fine). Complements host_is_self:
+ * that one stops rebinding (where the request *is* same-origin to the
+ * browser), this one stops plain cross-origin forgery. */
+static bool reject_if_not_json(httpd_req_t *req)
+{
+    char ctype[64];
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", ctype, sizeof(ctype)) == ESP_OK &&
+        strncasecmp(ctype, "application/json", 16) == 0) {
         return false;
     }
-    ESP_LOGW(TAG, "refused %s from outside the SoftAP subnet", req->uri);
-    httpd_resp_send_err(req, HTTPD_403_FORBIDDEN, "config is only reachable from the local Wi-Fi");
+    ESP_LOGW(TAG, "refused %s without a JSON Content-Type", req->uri);
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Content-Type must be application/json");
     return true;
 }
 
@@ -295,7 +366,7 @@ static void copy_json_str(const cJSON *parent, const char *key, char *out, size_
 
 static esp_err_t config_post_handler(httpd_req_t *req)
 {
-    if (reject_if_remote(req)) {
+    if (reject_if_remote(req) || reject_if_not_json(req)) {
         return ESP_FAIL;
     }
 
@@ -316,6 +387,21 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         cur_len += received;
     }
     buf[total_len] = '\0';
+
+    /* cJSON parses nested containers recursively, and ESP-IDF compiles it with
+     * the upstream default CJSON_NESTING_LIMIT of 1000 (components/json builds
+     * cJSON.c with no override; cJSON.c v1.7.x checks the limit only *after*
+     * recursing). 1000 frames is far more than this task's stack, so a ~1 KB
+     * body of "[[[[..." would panic before the limit is ever reached. A valid
+     * config body contains 4 objects and no arrays, so cap total containers
+     * long before recursion depth can matter. */
+    int container_budget = 16;
+    for (const char *p = buf; *p != '\0'; p++) {
+        if ((*p == '{' || *p == '[') && --container_budget < 0) {
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "too many nested JSON containers");
+            return ESP_FAIL;
+        }
+    }
 
     cJSON *root = cJSON_Parse(buf);
     if (root == NULL) {
@@ -385,16 +471,24 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
+    /* Save and write-back under one lock hold so NVS and the live config can't
+     * end up disagreeing if a console edit interleaves (the console already
+     * holds this lock across its own NVS write in cmd_gwcfg_save, so blocking
+     * briefly on flash I/O here is precedented). A console edit made while the
+     * request was still being parsed is still last-writer-wins - inherent to
+     * two unauthenticated writers, acceptable until auth adds sessions. */
+    provisioning_config_lock();
     esp_err_t err = provisioning_save(&work);
+    if (err == ESP_OK) {
+        memcpy(s_cfg, &work, sizeof(*s_cfg));
+    }
+    provisioning_config_unlock();
+
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "provisioning_save failed: %s", esp_err_to_name(err));
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "failed to save");
         return ESP_FAIL;
     }
-
-    provisioning_config_lock();
-    memcpy(s_cfg, &work, sizeof(*s_cfg));
-    provisioning_config_unlock();
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"status\":\"saved\"}");
@@ -464,7 +558,7 @@ static void scan_result_cb(const uplink_scan_result_t *result, void *ctx)
  */
 static esp_err_t scan_post_handler(httpd_req_t *req)
 {
-    if (reject_if_remote(req)) {
+    if (reject_if_remote(req) || reject_if_not_json(req)) {
         return ESP_FAIL;
     }
 
@@ -521,7 +615,7 @@ static void reboot_timer_cb(void *arg)
 
 static esp_err_t reboot_post_handler(httpd_req_t *req)
 {
-    if (reject_if_remote(req)) {
+    if (reject_if_remote(req) || reject_if_not_json(req)) {
         return ESP_FAIL;
     }
 
@@ -572,8 +666,10 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
     /* Default is 8 and there are 7 routes below - raised so adding one doesn't
      * fail registration at runtime instead of at compile time. */
     config.max_uri_handlers = 12;
-    /* The scan handler builds a cJSON array on this task's stack frame chain
-     * on top of the default 4KB. */
+    /* The status and scan handlers build and print whole cJSON trees on this
+     * stack, on top of the default 4KB. (Scan *results* are delivered from the
+     * driver's own task - see uplink_halow.h - but assembling and serializing
+     * the response happens here.) */
     config.stack_size = 6144;
 
     httpd_handle_t server = NULL;

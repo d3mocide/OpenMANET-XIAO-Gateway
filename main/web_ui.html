@@ -362,7 +362,13 @@
     <label>Passphrase
       <input type="password" id="softap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
     </label>
-    <p class="hint">8&ndash;63 characters, or blank for an open network.</p>
+    <!-- Blank means "keep current", NOT "open network": passphrases are never
+         echoed back by GET /api/config, so an empty field can't be told apart
+         from "clear it" - the firmware resolves that ambiguity as "keep".
+         Switching to an open network is a deliberate console-only action. -->
+    <p class="hint">8&ndash;63 characters. Leave blank to keep the current passphrase &mdash;
+      switching to an open network can only be done from the serial console
+      (<code>gwcfg-set-softap &lt;ssid&gt; -</code>).</p>
     <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
   </fieldset>
 
@@ -538,7 +544,9 @@ el('rebootBtn').addEventListener('click', async function () {
   showStatus('Rebooting…', true);
   clearInterval(statusTimer);
   try {
-    await fetch('/api/reboot', { method: 'POST' });
+    // The Content-Type header is required by the firmware's CSRF guard
+    // (reject_if_not_json in web_ui.c) even though the body is empty.
+    await fetch('/api/reboot', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
   } catch (e) {
     /* connection drops as the device reboots - expected */
   }
@@ -560,7 +568,8 @@ el('scanBtn').addEventListener('click', async function () {
   out.innerHTML = '';
   scanning = true;
   try {
-    var res = await fetch('/api/scan', { method: 'POST' });
+    // Content-Type required by the firmware's CSRF guard despite the empty body.
+    var res = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     if (!res.ok) {
       var text = await res.text().catch(function () { return ''; });
       throw new Error(text ? text.replace(/<[^>]*>/g, '').trim() : 'HTTP ' + res.status);
