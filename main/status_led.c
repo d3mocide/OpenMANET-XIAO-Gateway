@@ -25,6 +25,10 @@ static volatile bool s_attention = false;
  * rather than reading past the end if a new state arrives without one. */
 static const uint8_t s_patterns[] = {
     [UPLINK_LINK_RADIO_FAILED] = 0b00010101, /* fast triple-blink: nothing works */
+    /* Single short flash per second: alive and waiting to be told what to
+     * join. Deliberately the sparsest pattern here - it has to read as "idle,
+     * needs you" rather than as any of the busy/failed patterns below. */
+    [UPLINK_LINK_UNCONFIGURED] = 0b00000001,
     [UPLINK_LINK_DOWN]         = 0b00001111, /* slow 1Hz blink: searching */
     [UPLINK_LINK_ASSOCIATING]  = 0b00001111, /* same - it's still searching */
     [UPLINK_LINK_ASSOCIATED]   = 0b00000101, /* double-blink: no DHCP lease yet */

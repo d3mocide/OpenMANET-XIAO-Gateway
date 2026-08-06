@@ -315,6 +315,7 @@ HaLow radio in AP mode ([`PI_SIDE.md`](PI_SIDE.md)).
 | Pattern | Meaning | Go to |
 |---|---|---|
 | Fast triple-blink, repeating | Radio never initialized | Step 1 |
+| Single short flash (1 Hz) | Radio up, **no uplink configured yet** | Step 3 |
 | Slow blink (1 Hz) | Radio up, searching / not associated | Step 2 |
 | Double-blink | Associated, but no DHCP lease | Step 3 |
 | Solid on | Uplink up — associated and leased | Step 4 |
@@ -392,6 +393,11 @@ sub-GHz antenna before the radio.
 
 ## Step 3 — Associate, then get a lease
 
+**A factory-fresh node ships with no uplink at all**, and says so: the web UI shows a setup banner,
+the state reads `not configured`, and the LED gives a single short flash per second. It does not
+attempt to associate, which also leaves the radio free for the scan in step 2. This is the normal
+starting state, not a fault.
+
 Set the uplink credentials — web UI, or:
 
 ```
@@ -405,6 +411,7 @@ These are **two separate milestones** and the firmware reports them separately:
 
 | State shown | Meaning | Cause to chase |
 |---|---|---|
+| `not configured` | No uplink SSID has ever been set on this node | Nothing is wrong — do the step above |
 | `searching` | Not associated | SSID, security mode, region, or RF |
 | `associating` | In progress | Transient — if it sticks, credentials |
 | `associated, no lease` | 802.11 association succeeded, DHCP did not | **Pi-side DHCP**, not the radio |
@@ -479,8 +486,15 @@ it belongs in this runbook. See [`ROADMAP.md`](ROADMAP.md).
 
 - **`GET /api/log`** (the web UI's *Device log* panel) — the last few KB of log, held in RAM. What
   the serial console would have shown, without a cable.
-- **Core dumps** — a panic writes a backtrace to the flash coredump partition. Read it back with
-  `idf.py coredump-info`.
+- **The reset reason, logged at every boot.** The first lines in that log say why the *previous*
+  boot ended — `power-on`, `BROWNOUT (supply sagged)`, `PANIC (exception)`, `task watchdog` and so
+  on. This is the one instrument that separates a firmware crash from a power problem, and it works
+  from a phone with no serial cable attached, which is exactly the situation a reboot loop creates.
+- **Core dumps** — a panic writes a backtrace to the flash coredump partition. The crashing task,
+  its PC and a raw backtrace are printed into the log at boot alongside the reset reason; read the
+  symbolized version back with `idf.py coredump-info`. Note the dump is the *most recent panic ever
+  recorded*, not necessarily this boot's — a brownout leaves no dump at all, so trust the reset
+  reason over the dump when the two disagree.
 
 ## Recovery
 

@@ -26,10 +26,17 @@ typedef void (*uplink_halow_state_cb_t)(bool connected, void *ctx);
  * different failure causes - a stuck ASSOCIATING points at country code,
  * security mode, SSID or RF; a stuck ASSOCIATED points at DHCP on the Pi. A
  * single "connected" flag collapses those two into one indistinguishable
- * "it doesn't work". */
+ * "it doesn't work".
+ *
+ * UNCONFIGURED is the same argument applied one step earlier. "Nobody has told
+ * this node which AP to join" and "the AP we were told about isn't answering"
+ * have nothing in common except that neither is associated, and only the
+ * second one is a fault. Reporting both as DOWN sent an operator hunting a
+ * radio problem that did not exist. */
 typedef enum {
     UPLINK_LINK_RADIO_FAILED = 0, /* uplink_halow_init() failed - no radio at all */
-    UPLINK_LINK_DOWN,             /* radio up, not associated */
+    UPLINK_LINK_UNCONFIGURED,     /* radio up, but no uplink has ever been provisioned */
+    UPLINK_LINK_DOWN,             /* radio up, configured, not associated */
     UPLINK_LINK_ASSOCIATING,      /* association in progress */
     UPLINK_LINK_ASSOCIATED,       /* 802.11 associated, still no DHCP lease */
     UPLINK_LINK_UP,               /* associated + leased: the datapath is usable */

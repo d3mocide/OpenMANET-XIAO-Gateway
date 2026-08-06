@@ -18,12 +18,21 @@ extern "C" {
  * Patterns, in ascending order of good news:
  *
  *   fast triple-blink, repeating   radio failed to initialize (wiring/BCF/pins)
+ *   single short flash (1 Hz)      radio up, but no uplink configured yet
  *   slow blink (1 Hz)              radio up, searching / not associated
  *   double-blink                   associated, waiting for a DHCP lease
  *   solid on                       uplink up - associated and leased
  *
  * The pattern is derived from uplink_halow_get_link_state(), so it stays
  * correct without anything having to remember to update it.
+ *
+ * One reading trap, learned the hard way on real hardware: a node stuck in a
+ * *reboot loop* also shows a repeating triple-blink, because it dies during
+ * the window before uplink_halow_init() completes and the link state is still
+ * RADIO_FAILED. The tell is the sequence, not the pattern - nothing here ever
+ * moves backwards, so triple-blink -> some better pattern -> triple-blink
+ * again means the device restarted. app_main logs the reset reason at boot
+ * precisely so that guess doesn't have to be made from the LED.
  */
 esp_err_t status_led_start(void);
 

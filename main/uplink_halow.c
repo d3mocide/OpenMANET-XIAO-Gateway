@@ -33,6 +33,7 @@ static const char *TAG = "uplink_halow";
 static gw_uplink_config_t s_cfg;
 static esp_netif_t *s_netif = NULL;
 static bool s_ready = false;               /* uplink_halow_init() succeeded */
+static bool s_configured = false;          /* an uplink SSID was actually provisioned */
 static volatile bool s_associated = false; /* 802.11 association only */
 static volatile bool s_associating = false;
 static volatile bool s_has_ip = false;     /* the signal callers actually want */
@@ -165,6 +166,19 @@ static esp_err_t halow_sta_bringup(const gw_uplink_config_t *cfg, esp_netif_t **
     err = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, ip_event_handler, NULL, NULL);
     if (err != ESP_OK) {
         return err;
+    }
+
+    /* Radio bring-up finishes here even with no uplink provisioned, and that's
+     * deliberate: the scan API needs an initialized radio, and scanning is
+     * exactly what an operator does *before* there's an SSID to configure.
+     * Handing mmhalow_set_config() a zero-length SSID would be rejected later
+     * by umac_connection_validate_sta_args() anyway, so skip it entirely and
+     * leave the driver's config untouched until there's something real to
+     * apply. */
+    if (!gw_uplink_is_configured(cfg)) {
+        ESP_LOGW(TAG, "no HaLow uplink configured - radio is up and scannable, "
+                      "but no association will be attempted");
+        return ESP_OK;
     }
 
     mmhalow_wifi_config_t conf = {
@@ -340,6 +354,7 @@ static void reconnect_task(void *arg)
 esp_err_t uplink_halow_init(const gw_uplink_config_t *cfg)
 {
     memcpy(&s_cfg, cfg, sizeof(s_cfg));
+    s_configured = gw_uplink_is_configured(&s_cfg);
     esp_err_t err = halow_sta_bringup(&s_cfg, &s_netif);
     s_ready = (err == ESP_OK);
     if (s_ready) {
@@ -371,6 +386,16 @@ esp_err_t uplink_halow_start(void)
         ESP_LOGE(TAG, "not starting the reconnect task - the radio never initialized");
         return ESP_ERR_INVALID_STATE;
     }
+    if (!s_configured) {
+        /* Same reasoning, one step earlier. With no SSID there is nothing to
+         * associate with, so the loop would spend forever alternating between
+         * 15-second connect attempts and backoff - producing log noise that
+         * looks like a fault, and holding the radio busy exactly when the
+         * operator is trying to scan with it. Provision an uplink and reboot;
+         * the state is reported as "not configured" until then. */
+        ESP_LOGW(TAG, "not starting the reconnect task - no uplink SSID is configured");
+        return ESP_ERR_INVALID_STATE;
+    }
     if (s_reconnect_task_handle != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -394,6 +419,9 @@ uplink_link_state_t uplink_halow_get_link_state(void)
     if (!s_ready) {
         return UPLINK_LINK_RADIO_FAILED;
     }
+    if (!s_configured) {
+        return UPLINK_LINK_UNCONFIGURED;
+    }
     if (s_has_ip) {
         return UPLINK_LINK_UP;
     }
@@ -411,6 +439,8 @@ const char *uplink_halow_link_state_name(uplink_link_state_t state)
     switch (state) {
     case UPLINK_LINK_RADIO_FAILED:
         return "radio failed";
+    case UPLINK_LINK_UNCONFIGURED:
+        return "not configured";
     case UPLINK_LINK_DOWN:
         return "searching";
     case UPLINK_LINK_ASSOCIATING:

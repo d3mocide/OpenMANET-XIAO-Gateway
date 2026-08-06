@@ -57,10 +57,15 @@ void provisioning_get_defaults(gw_config_t *cfg)
 
     strlcpy(cfg->node_id, "xiao-gw-01", sizeof(cfg->node_id));
 
-    /* Placeholder uplink values - design/PI_SIDE.md flags the real SSID/
-     * security mode as unconfirmed against a live Pi. Must be set via
-     * `gwcfg-set-uplink` (or reflashed defaults) before first deployment. */
-    strlcpy(cfg->uplink.ssid, "openmanet-halow", sizeof(cfg->uplink.ssid));
+    /* No uplink by default, and deliberately no placeholder SSID.
+     *
+     * This used to ship "openmanet-halow", which made a factory-fresh node
+     * indistinguishable from a configured one whose AP is switched off: both
+     * reported "searching" and blinked identically, while the node burned
+     * 15-second association attempts against a name nobody had chosen. An
+     * empty SSID is the "not configured yet" state (gw_uplink_is_configured())
+     * and the firmware reports and acts on it - see uplink_halow_start(). */
+    cfg->uplink.ssid[0] = '\0';
     cfg->uplink.psk[0] = '\0';
     cfg->uplink.security = GW_SECURITY_OPEN;
 
@@ -197,14 +202,16 @@ esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t err
         GW_REJECT("node_id must not be empty");
     }
 
-    if (cfg->uplink.ssid[0] == '\0') {
-        GW_REJECT("uplink SSID must not be empty");
-    }
-
-    /* HaLow SAE needs a passphrase; open/OWE must not carry one. (No length
-     * floor asserted for SAE - unlike WPA2-PSK, SAE does not specify one.) */
-    if (cfg->uplink.security == GW_SECURITY_SAE && cfg->uplink.psk[0] == '\0') {
-        GW_REJECT("uplink security is SAE but no passphrase is set");
+    /* An empty uplink SSID is valid: it is how "not configured yet" is
+     * represented (gw_uplink_is_configured()), and rejecting it here would
+     * make the built-in defaults themselves fail validation on first boot.
+     * The remaining uplink checks only apply once one has actually been set. */
+    if (gw_uplink_is_configured(&cfg->uplink)) {
+        /* HaLow SAE needs a passphrase; open/OWE must not carry one. (No length
+         * floor asserted for SAE - unlike WPA2-PSK, SAE does not specify one.) */
+        if (cfg->uplink.security == GW_SECURITY_SAE && cfg->uplink.psk[0] == '\0') {
+            GW_REJECT("uplink security is SAE but no passphrase is set");
+        }
     }
 
     if (cfg->softap.ssid[0] == '\0') {

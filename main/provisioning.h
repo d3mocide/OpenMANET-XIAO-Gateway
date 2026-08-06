@@ -29,10 +29,11 @@ void provisioning_config_unlock(void);
  * want the reason string to show the user. */
 esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t errbuf_len);
 
-/* Fills cfg with the built-in placeholder defaults. The
- * uplink SSID/security in particular are guesses, not confirmed values -
- * see design/PI_SIDE.md - and must be provisioned for real
- * hardware before the HaLow uplink will associate. */
+/* Fills cfg with the built-in defaults: a working SoftAP and CoT relay, and
+ * deliberately *no* uplink at all (empty SSID - see gw_uplink_is_configured()).
+ * A factory-fresh node is therefore explicitly "not configured" rather than
+ * quietly chasing a placeholder AP; the operator names the Pi's HaLow AP via
+ * the web UI or `gwcfg-set-uplink`. */
 void provisioning_get_defaults(gw_config_t *cfg);
 
 /* Loads config from NVS into cfg, falling back to provisioning_get_defaults()

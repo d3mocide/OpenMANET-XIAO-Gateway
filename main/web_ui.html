@@ -266,6 +266,12 @@
   }
   #status.ok { display: block; background: var(--color-ok); color: #fff; }
   #status.err { display: block; background: var(--color-warn); color: #fff; }
+  /* [hidden] needs the explicit rule: the element sets `display` when shown,
+     and a bare attribute would otherwise lose to that specificity. */
+  .setup-banner { display: block; padding: 12px 14px; margin: 0 0 16px;
+                  border-left: 4px solid var(--color-warn); background: rgba(0,0,0,0.05);
+                  border-radius: 4px; line-height: 1.5; }
+  .setup-banner[hidden] { display: none; }
 
   @media (prefers-reduced-motion: no-preference) {
     .dot { transition: background-color 0.3s ease; }
@@ -281,6 +287,15 @@
   </div>
   <h1>XIAO HaLow Gateway<span id="hdrNode">&nbsp;</span></h1>
 </header>
+
+<!-- Shown only until an uplink has been provisioned. A factory-fresh node has
+     no HaLow AP to join and does not attempt one, which without this reads as
+     a broken radio rather than as an unfinished setup step. -->
+<div id="setupBanner" class="setup-banner" hidden>
+  <strong>This node has no HaLow uplink configured yet.</strong>
+  It will not try to connect until you set one. Use
+  <em>Scan for HaLow APs</em> below to find your gateway's AP, pick it, then save and reboot.
+</div>
 
 <h2>Status</h2>
 <div class="panel">
@@ -453,6 +468,10 @@ async function loadStatus() {
     // "associated, no lease" are different problems with different fixes, and
     // that distinction is the whole point of showing it here.
     el('stUplink').textContent = u.state || (up ? 'Connected' : 'Down');
+    // `configured` is false only on a node nobody has provisioned yet. Treat a
+    // missing field as configured, so an older firmware doesn't show the
+    // setup banner permanently.
+    el('setupBanner').hidden = (u.configured !== false);
     el('stRssi').textContent = (typeof u.rssi === 'number') ? (u.rssi + ' dBm') : '—';
     el('stUplinkIp').textContent = u.ip || 'no lease';
     el('stApIp').textContent = (s.softap && s.softap.ip) || '—';

@@ -37,7 +37,12 @@ extern "C" {
  * collides with the phone-hotspot and home-router space. A v1 blob is
  * discarded with a log line and the unit falls back to defaults; reprovision
  * it via the web UI or `gwcfg-*`. */
-#define GW_CONFIG_VERSION 2u
+/* v3: the uplink SSID no longer ships with a placeholder value, and an empty
+ * one now *means* something - see gw_uplink_is_configured() below. A v2 blob
+ * carries "openmanet-halow" whether or not anyone chose it, so it would come
+ * back as "configured" and resume chasing an AP that may never have existed.
+ * Discarding it costs one reprovision and removes that ambiguity for good. */
+#define GW_CONFIG_VERSION 3u
 
 /* Security modes the HaLow uplink STA can be configured for. Must match
  * whatever the associated Pi's HaLow AP is running (design/PI_SIDE.md) -
@@ -55,6 +60,9 @@ typedef enum {
 } gw_security_mode_t;
 
 typedef struct {
+    /* Empty means "nobody has configured an uplink on this node yet", which is
+     * a real state the firmware acts on - not merely a missing value. See
+     * gw_uplink_is_configured(). */
     char ssid[GW_SSID_MAX_LEN + 1];
     char psk[GW_PSK_MAX_LEN + 1]; /* only used when security == GW_SECURITY_SAE */
     gw_security_mode_t security;
@@ -78,6 +86,22 @@ typedef struct {
     char gateway[GW_IP4_STR_MAX_LEN];
     char netmask[GW_IP4_STR_MAX_LEN];
 } gw_softap_config_t;
+
+/* Has an operator ever told this node which HaLow AP to join?
+ *
+ * Deliberately derived from the SSID rather than stored as its own flag: an
+ * empty SSID cannot associate with anything, so the two can never disagree,
+ * and there is no second piece of state to keep in sync across the console,
+ * the web UI and the NVS load path.
+ *
+ * This gates real behaviour - an unconfigured node does not start the
+ * reconnect loop at all (see uplink_halow_start()), which keeps the radio free
+ * for scanning during setup and stops the node reporting "searching" for an AP
+ * nobody ever named. */
+static inline bool gw_uplink_is_configured(const gw_uplink_config_t *uplink)
+{
+    return uplink != NULL && uplink->ssid[0] != '\0';
+}
 
 typedef struct {
     char group[GW_IP4_STR_MAX_LEN]; /* multicast group, e.g. "239.2.3.1" */
