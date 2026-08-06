@@ -1,5 +1,0 @@
-# CI-only sdkconfig override, layered on top of sdkconfig.defaults via
-# `idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;country-configs/JP.defaults"`.
-# Bakes a real regulatory domain into the web-flasher's JP build - see
-# .github/workflows/build-firmware.yml and design/PI_SIDE.md.
-CONFIG_HALOW_COUNTRY_CODE="JP"

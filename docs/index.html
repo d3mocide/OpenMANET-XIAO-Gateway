@@ -142,34 +142,6 @@
 
   .panel strong { color: var(--color-accent); }
 
-  .region-picker {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin: 1.5rem 0 0;
-  }
-  .region-picker label {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--color-muted);
-  }
-  .region-picker select {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--color-ink);
-    background: var(--color-surface);
-    border: 1px solid var(--color-line);
-    border-radius: 3px;
-    padding: 0.4rem 0.6rem;
-  }
-  .region-picker select:focus-visible {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 2px;
-  }
-
   esp-web-install-button { display: block; margin: 1.75rem 0; }
 
   .flash-btn {
@@ -264,22 +236,7 @@
   typed into this page.
 </div>
 
-<div class="region-picker">
-  <label for="region">Region</label>
-  <select id="region">
-    <option value="us/manifest.json">United States</option>
-    <option value="ca/manifest.json">Canada</option>
-    <option value="eu/manifest.json">European Union</option>
-    <option value="gb/manifest.json">United Kingdom</option>
-    <option value="au/manifest.json">Australia</option>
-    <option value="nz/manifest.json">New Zealand</option>
-    <option value="jp/manifest.json">Japan</option>
-    <option value="kr/manifest.json">South Korea</option>
-    <option value="in/manifest.json">India</option>
-  </select>
-</div>
-
-<esp-web-install-button manifest="us/manifest.json">
+<esp-web-install-button manifest="manifest.json">
   <button slot="activate" class="flash-btn">Connect &amp; Flash</button>
   <span slot="unsupported" class="unsupported">
     Your browser doesn't support Web Serial. Use Chrome or Edge on desktop.
@@ -331,22 +288,20 @@
 
 <h2>Regulatory / country code</h2>
 <p>
-  Each region above ships its own build with the legal channel list baked in at compile time
-  (<code>CONFIG_HALOW_COUNTRY_CODE</code>) — pick your region before flashing so the radio comes up
-  on the right regulatory domain; it can't be changed afterward from this page or the on-device
-  config UI. It has to match the regulatory domain your mesh Pi's HaLow radio is running — a
-  mismatch is silent, and shows up as a scan that finds nothing rather than as an error.
-  Building from source instead? <code>sdkconfig.defaults</code> defaults to <code>"US"</code> as a
-  working fallback; set your own ISO 3166-1 country code before flashing.
+  This firmware is <strong>US-only (902–928 MHz)</strong>, because the hardware is. The XIAO HaLow
+  board carries a Quectel <strong>FGH100M-H</strong>, a 902–928 MHz part, and the board calibration
+  file the firmware loads is Morse Micro's <code>bcf_fgh100mhaamd.bin</code> — listed upstream as
+  "FGH100M-H (US)". Seeed likewise document the board as North America only. There is no EU/UK/JP
+  variant of this module to build for.
+</p>
+<p>
+  The channel list is baked in at compile time (<code>CONFIG_HALOW_COUNTRY_CODE="US"</code>) and
+  can't be changed afterward from this page or the on-device config UI. Your mesh Pi's HaLow radio
+  has to be on the same regulatory domain — a mismatch is silent, and shows up as a scan that finds
+  nothing rather than as an error.
 </p>
 
 <footer>Firmware built automatically from the repository's <code>main</code> branch.</footer>
-
-<script>
-  document.getElementById("region").addEventListener("change", (event) => {
-    document.querySelector("esp-web-install-button").setAttribute("manifest", event.target.value);
-  });
-</script>
 
 </body>
 </html>

@@ -4,6 +4,9 @@ ESP-IDF firmware for a Seeed XIAO ESP32-S3 + Seeed XIAO WM6108 (HaLow) node: pho
 the XIAO's 2.4 GHz SoftAP, and it relays their traffic — including ATAK CoT multicast — over a
 HaLow uplink into an OpenMANET mesh via a Raspberry Pi.
 
+The HaLow module is a **Quectel FGH100M-H** (Morse Micro MM6108 silicon): **902–928 MHz, US only,
+one build**. Don't add regions — see the `CONFIG_HALOW_COUNTRY_CODE` entry below.
+
 Read [`design/ROADMAP.md`](design/ROADMAP.md) first. It has current status, the build-order
 checklist, what isn't built yet, and the settled decisions.
 
@@ -52,8 +55,8 @@ idf.py build
 - **Never pipe `idf.py build` through `tail`/`head`** to shorten output — the shell exit code then
   reflects the pipe, not the build, and it will claim success on real failures. Grep the log for
   `error:`/`FAILED` instead of trusting `$?`.
-- CI builds every push to `main` (all 9 regions) and every PR (US only), in the official
-  `espressif/idf` Docker image.
+- CI builds every push to `main` and every PR (one US build — see the region note below), in the
+  official `espressif/idf` Docker image.
 
 Current baseline: zero errors, zero warnings, binary ~1.67 MB, 44% free in the 3 MB app slot.
 
@@ -77,14 +80,24 @@ them without reading it.
 - **Integer arithmetic for frequency formatting**, not `%f`. `CONFIG_LIBC_NEWLIB_NANO_FORMAT` is off
   today but is exactly the knob someone reaches for to shrink a binary, and the failure mode is
   garbage in the scan table during bring-up.
-- **`CONFIG_HALOW_COUNTRY_CODE` cannot be made runtime-configurable.** The SDK reads it from Kconfig
-  before the radio scans. The web flasher's region picker is the mechanism.
+- **`CONFIG_HALOW_COUNTRY_CODE` is fixed at `"US"` and cannot be made runtime-configurable.** The SDK
+  reads it from Kconfig before the radio scans. US isn't a default to be generalized later: the
+  FGH100M-H is a 902–928 MHz part and its BCF (`bcf_fgh100mhaamd.bin`) carries real calibration for
+  US only. The old nine-region matrix and `country-configs/` were deleted for that reason — see
+  `design/HARDWARE.md` "Regulatory domain".
 
 ## Conventions
 
 - **Comments explain *why*, and cite sources for non-obvious API behaviour.** The existing code does
   this heavily — match it. A comment that restates the code is noise; one that says which upstream
   file proves the call is correct is what stops the next person reverting a subtle fix.
+- **Comments in the C sources cost zero flash — don't thin them to save space.** Measured, not
+  assumed: stripping all 54,880 bytes of comments from `main/*.c`/`*.h` and rebuilding produced a
+  binary of *identical* size, differing only in the ELF hash, the image checksum, and a few
+  embedded `__LINE__` values. The preprocessor discards comments before codegen.
+  **`main/web_ui.html` is the one exception**, because it's embedded verbatim — and
+  `main/minify_web_ui.py` already strips the embedded copy at build time (~24%), so the source file
+  should stay commented too. Don't delete that build step, and don't hand-minify the source.
 - **Bump `GW_CONFIG_VERSION`** (`main/gw_config.h`) whenever `gw_config_t`'s layout *or the meaning
   of a field* changes. Stored config is discarded on mismatch, which is deliberate.
 - **New GPIO goes in `main/board.h`** and must not collide with the `CONFIG_MM_*` pins (1, 2, 3, 4,
@@ -101,7 +114,6 @@ them without reading it.
 main/           firmware (see README.md for the per-file table)
 design/         ROADMAP.md, HARDWARE.md, PI_SIDE.md — three docs, no more
 docs/           the ESP Web Tools browser flasher page (deployed to GitHub Pages)
-country-configs/ per-region CONFIG_HALOW_COUNTRY_CODE overrides for the CI matrix
 ```
 
 `design/` deliberately holds exactly three documents. Content that doesn't fit one of them probably

@@ -5,8 +5,8 @@ on:
     branches: [main]
   # Build on PRs too. Without this a branch can be broken all the way to merge
   # and the first sign of it is a failed deploy on main - which is also the
-  # moment the web flasher stops getting new firmware. PRs build one region
-  # only (see the matrix below) and never deploy.
+  # moment the web flasher stops getting new firmware. PRs build but never
+  # deploy.
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -22,24 +22,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # One build, US only. This used to be a 9-region matrix over
+  # country-configs/*.defaults; the hardware doesn't support the other eight.
+  # The FGH100M-H is a 902-928 MHz part (Quectel product page; Seeed's spec
+  # table), and Morse Micro's own morse-firmware/WHENCE.md L51-54 names the
+  # BCF this firmware loads - bcf_fgh100mhaamd.bin, pinned by CONFIG_MM_BCF_FILE
+  # - as "FGH100M-H (US)". See design/HARDWARE.md "Regulatory domain" for the
+  # full evidence and the per-region breakdown.
   build:
-    strategy:
-      matrix:
-        # Regulatory domain, baked into the firmware at build time via
-        # CONFIG_HALOW_COUNTRY_CODE (see country-configs/*.defaults) - this
-        # can't be a runtime/gwcfg-* setting, so each region needs its own
-        # binary. This list is exactly the 9 domains Morse Micro's regdb
-        # (mmregdb.c, upstream of morsemicro/halow) actually ships channel
-        # tables for - not an arbitrary/expandable country list. Adding an
-        # entry here requires a matching country-configs/<CODE>.defaults AND
-        # a real regdb entry for that code upstream; other countries aren't
-        # buildable until Morse Micro ships regulatory data for them.
-        #
-        # Pull requests build US only. The regions differ by exactly one
-        # Kconfig string, so nine builds of the same source find nine copies of
-        # the same compile error - one is enough to gate a merge, and the full
-        # matrix still runs on main where the artifacts are actually published.
-        country: ${{ fromJSON(github.event_name == 'pull_request' && '["US"]' || '["US","CA","EU","GB","AU","NZ","JP","KR","IN"]') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -49,23 +39,24 @@ jobs:
       # version - avoids the local-toolchain gotchas found setting this up by
       # hand: missing libusb for openocd, the Python venv step silently not
       # completing, etc.
-      - name: Build firmware (country=${{ matrix.country }})
+      # CONFIG_HALOW_COUNTRY_CODE="US" comes straight from sdkconfig.defaults,
+      # so this is a plain build with no SDKCONFIG_DEFAULTS layering.
+      - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.1
           target: esp32s3
           path: "."
-          command: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;country-configs/${{ matrix.country }}.defaults" build
+          command: idf.py build
 
-      - name: Assemble region manifest + binaries
+      - name: Assemble manifest + binaries
         run: |
           set -eu
-          REGION="$(echo "${{ matrix.country }}" | tr '[:upper:]' '[:lower:]')"
-          mkdir -p "region/${REGION}"
-          cp build/bootloader/bootloader.bin "region/${REGION}/"
-          cp build/partition_table/partition-table.bin "region/${REGION}/"
-          cp build/ota_data_initial.bin "region/${REGION}/"
-          cp build/xiao_halow_gateway.bin "region/${REGION}/"
+          mkdir -p site
+          cp build/bootloader/bootloader.bin site/
+          cp build/partition_table/partition-table.bin site/
+          cp build/ota_data_initial.bin site/
+          cp build/xiao_halow_gateway.bin site/
 
           # The offsets below MUST match partitions.csv. They are not the
           # defaults: this is a dual-OTA layout, so the app lives at 0x20000
@@ -100,9 +91,9 @@ jobs:
           check_part "$APP_OFFSET" xiao_halow_gateway.bin
 
           VERSION="$(git rev-parse --short HEAD)"
-          cat > "region/${REGION}/manifest.json" <<EOF
+          cat > site/manifest.json <<EOF
           {
-            "name": "XIAO HaLow Gateway (${{ matrix.country }})",
+            "name": "XIAO HaLow Gateway (US)",
             "version": "${VERSION}",
             "builds": [
               {
@@ -118,11 +109,11 @@ jobs:
           }
           EOF
 
-      - name: Upload region artifact
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: region-${{ matrix.country }}
-          path: region
+          name: firmware
+          path: site
 
   # Publishing steps only. A PR build stops after `build` above: it proves the
   # firmware compiles without touching the live flasher page.
@@ -134,12 +125,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download all region artifacts
+      - name: Download firmware artifact
         uses: actions/download-artifact@v4
         with:
-          pattern: region-*
+          name: firmware
           path: site
-          merge-multiple: true
 
       - name: Add flasher page
         run: cp docs/index.html site/
