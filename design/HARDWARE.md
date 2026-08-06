@@ -9,7 +9,7 @@ failure looks like a software problem.
 
 - Companion docs: [`ROADMAP.md`](ROADMAP.md) (status, what's next),
   [`PI_SIDE.md`](PI_SIDE.md) (the other end of the link)
-- **Last updated:** 2026-08-05
+- **Last updated:** 2026-08-06
 
 ---
 
@@ -282,6 +282,9 @@ The first time this firmware meets real hardware: what to run, what a pass looks
 tell two identical-looking failures apart.
 
 The checklist in [`ROADMAP.md`](ROADMAP.md) tracks *whether* each step has passed. This is *how*.
+**The step numbers are the same in both documents** — one list, two views of it. Keep them that way
+when either changes; a "step 5 passed" note that means different things in different files is worse
+than no note.
 
 **Prerequisites:** the node assembled as above with both antennas fitted, and a Pi running its
 HaLow radio in AP mode ([`PI_SIDE.md`](PI_SIDE.md)).
@@ -390,7 +393,7 @@ indistinguishable failure, which is why the firmware doesn't use one.
 If it sits at `associated, no lease`, the firmware restarts its DHCP client once, then disconnects
 and re-associates. Check the Pi is actually serving that interface.
 
-## Step 4 — Local Wi-Fi and client connectivity
+## Step 4 — Local SoftAP and DHCP
 
 Can be done at any time — it doesn't depend on the uplink — and it's the natural first hardware
 test.
@@ -399,20 +402,30 @@ test.
 2. You should get a `172.16.50.x` address.
 3. Browse to `http://172.16.50.1/`.
 
-Then, once the uplink is `up`:
+That is the whole of step 4: the SoftAP, its DHCP server and the web UI, with the uplink out of the
+picture. Everything from here needs the uplink `up`.
 
-4. **Ping something on the mesh by IP.** Proves NAT and routing.
-5. **Resolve a hostname.** Proves the DNS server the node hands out in its DHCP leases works.
+## Step 5 — NAT: outbound reach from a client
+
+A client on the SoftAP (step 4) and the uplink at `up` (step 3). **Test reachability and name
+resolution separately** — they fail independently and for unrelated reasons.
+
+1. **Ping something on the mesh by IP.** Proves NAPT and the default route.
+2. **Resolve a hostname.** Proves the DNS server the node copies out of its own uplink lease and
+   into the SoftAP's DHCP offers.
+3. **Confirm mesh-side that translated source addresses actually appear** — a capture on the Pi
+   should show the XIAO's uplink address, not `172.16.50.x`. Traffic leaving untranslated is a
+   different fault from traffic never leaving, and only the mesh side can tell them apart.
 
 > **If you joined the node's Wi-Fi *before* the uplink came up**, disconnect and rejoin before
 > testing DNS. The DNS server is copied from the uplink's own lease and pushed into the SoftAP's
 > DHCP server at the moment the uplink comes up; clients already holding a lease keep their old,
 > DNS-less one until they renew. Normal, and only affects the first boot of a session.
 
-If step 4 works and step 5 doesn't, the log says why — look for
+If 1 works and 2 doesn't, the log says why — look for
 `uplink DHCP lease carried no DNS server`, meaning the Pi didn't offer one.
 
-## Step 4a — Multicast over HaLow, in isolation
+## Step 5a — Multicast over HaLow, in isolation
 
 **Do this before involving the CoT relay.** Multicast over mesh routing is a classic silent-drop
 point and fails in exactly the same way a broken relay does — test them separately or you won't be
@@ -421,7 +434,7 @@ able to tell which is at fault.
 From a host on the mesh, send to `239.2.3.1:6969` and confirm with a plain multicast receiver on
 the Pi that group traffic crosses the mesh at all. Only then bring the relay into the picture.
 
-## Step 5 — CoT relay
+## Step 6 — CoT relay
 
 With the uplink `up`, the web UI's **CoT relay** stat should show the group and port rather than
 `Waiting`. Then:
@@ -429,8 +442,14 @@ With the uplink `up`, the web UI's **CoT relay** stat should show the group and 
 1. ATAK on a phone behind the node should see CoT from the mesh.
 2. ATAK elsewhere on the mesh should see the phone.
 
-If the relay says it started and nothing flows, step 4a tells you whether to look at the relay or
+If the relay says it started and nothing flows, step 5a tells you whether to look at the relay or
 at the mesh.
+
+## Step 7 is not a bench step
+
+The checklist's last entry — web UI authentication — is development work, not something you run on
+the node. It's tracked alongside the bring-up steps because it gates shipping and OTA, not because
+it belongs in this runbook. See [`ROADMAP.md`](ROADMAP.md).
 
 ## When something goes wrong and nobody was watching
 

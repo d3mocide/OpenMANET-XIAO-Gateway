@@ -219,9 +219,10 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 
     /* "state" is the finer-grained version, and the one that makes this panel
      * a bring-up instrument rather than a health light: "searching" and
-     * "associated, no lease" are bring-up steps 1 and 2 failing
-     * respectively, with entirely different causes (RF/country/credentials vs.
-     * DHCP on the Pi). A single boolean cannot tell them apart. */
+     * "associated, no lease" are the two milestones of step 3 in
+     * design/HARDWARE.md failing respectively, with entirely different causes
+     * (RF/country/credentials vs. DHCP on the Pi). A single boolean cannot
+     * tell them apart. */
     uplink_link_state_t link_state = uplink_halow_get_link_state();
     cJSON_AddStringToObject(uplink, "state", uplink_halow_link_state_name(link_state));
     cJSON_AddBoolToObject(uplink, "associated", link_state >= UPLINK_LINK_ASSOCIATED);

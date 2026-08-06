@@ -21,9 +21,9 @@ typedef void (*uplink_halow_state_cb_t)(bool connected, void *ctx);
 /* Where the uplink actually is, as opposed to the binary "usable / not usable"
  * the state callback reports.
  *
- * The distinction matters during bring-up: association (step 1) and the DHCP
- * lease (step 2) are separate milestones with completely different failure
- * causes - a stuck ASSOCIATING points at country code,
+ * The distinction matters during bring-up: association and the DHCP lease are
+ * the two separate milestones of step 3 in design/HARDWARE.md, with completely
+ * different failure causes - a stuck ASSOCIATING points at country code,
  * security mode, SSID or RF; a stuck ASSOCIATED points at DHCP on the Pi. A
  * single "connected" flag collapses those two into one indistinguishable
  * "it doesn't work". */
@@ -91,7 +91,7 @@ int32_t uplink_halow_get_rssi(void);
  *
  * This answers the question nothing else in this firmware can: "is the Pi's
  * HaLow AP visible at all, on what channel, at what strength?" - which is
- * bring-up steps 1-2 in design/HARDWARE.md, and previously required a
+ * bring-up step 2 in design/HARDWARE.md, and previously required a
  * Pi-side capture to answer.
  *
  * Note it scans the channel list derived from CONFIG_HALOW_COUNTRY_CODE. An AP

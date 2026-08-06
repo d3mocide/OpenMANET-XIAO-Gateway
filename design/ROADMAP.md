@@ -6,7 +6,7 @@ you're picking the project back up.**
 - Companion docs: [`HARDWARE.md`](HARDWARE.md) (what to buy, how to build one, how to bring it up),
   [`PI_SIDE.md`](PI_SIDE.md) (the other end of the link)
 - Architecture diagram and repo layout: [`../README.md`](../README.md)
-- **Last updated:** 2026-08-05
+- **Last updated:** 2026-08-06
 
 Keep this file current: tick the checklist when a step passes, move an item out of "not built yet"
 when it lands, and add to "settled decisions" rather than re-arguing one. Historical detail
@@ -57,7 +57,9 @@ Everything above compiles clean. **None of it has been run on hardware.**
 ## Build-order checklist
 
 Procedure for each step — what to run, what a pass looks like, how to tell identical-looking
-failures apart — is in [`HARDWARE.md`](HARDWARE.md) Part 2. This is the tracker.
+failures apart — is in [`HARDWARE.md`](HARDWARE.md) Part 2. This is the tracker; that is the
+runbook. **The step numbers are shared** — if you renumber one, renumber the other, or a recorded
+"step 5 passed" stops meaning one thing.
 
 - [ ] **Step 0** — Confirm the Pi's HaLow radio config: AP mode, SSID, security mode, country,
       DHCP behaviour. See [`PI_SIDE.md`](PI_SIDE.md) "Still to verify". Flash the region build that
@@ -69,9 +71,9 @@ failures apart — is in [`HARDWARE.md`](HARDWARE.md) Part 2. This is the tracke
       whether the AP is on a channel this build may legally use.
 - [ ] **Step 3** — HaLow STA associates, then gets a DHCP lease. Two separate milestones, reported
       separately (`searching` vs. `associated, no lease`) because they have different causes.
-- [ ] **Step 4** — Local SoftAP + DHCP validated standalone (phones join, get a lease). Doesn't
-      depend on steps 0–3 — the natural first hardware test.
-- [ ] **Step 5** — NAPT validated: a phone gets outbound mesh reach. **Test IP reachability and
+- [ ] **Step 4** — Local SoftAP and DHCP validated standalone (phones join, get a lease, reach the
+      web UI). Doesn't depend on steps 0–3 — the natural first hardware test.
+- [ ] **Step 5** — NAT validated: a phone gets outbound mesh reach. **Test IP reachability and
       name resolution separately** — they fail independently, and DNS propagation was missing
       entirely until recently. Confirm translated source addresses actually appear mesh-side.
 - [ ] **Step 5a** — **Plain multicast over HaLow validated, before involving the relay.** Confirm
@@ -79,7 +81,8 @@ failures apart — is in [`HARDWARE.md`](HARDWARE.md) Part 2. This is the tracke
       forwards 239.2.3.1 at all. Multicast over mesh routing is a classic silent-drop point and
       fails identically to a broken relay — isolate them or you can't tell which is at fault.
 - [ ] **Step 6** — CoT relay validated: ATAK on a phone sees mesh CoT and vice versa.
-- [ ] **Step 7** — Web UI authentication. Blocks shipping and blocks OTA delivery. Design settled
+- [ ] **Step 7** — Web UI authentication. **Not a bench step** — development work, listed here
+      because it gates shipping and OTA delivery, so it has no entry in the runbook. Design settled
       below; not started.
 
 ## Not built yet
