@@ -112,9 +112,22 @@ through R9 (10 K), so the module is permanently awake, and `BUSY` is pulled to G
 that connect to nothing.
 
 That is almost certainly deliberate — Seeed chose the pull resistors that make the module behave
-without those lines — but it has a bring-up consequence: **GPIO 5 floats on the ESP32-S3 side.** If
-the driver samples BUSY and reads noise rather than a steady low, that is the cause, and an internal
-pull-down on GPIO 5 is the fix. Check this before suspecting the radio.
+without those lines — but it decides a Kconfig setting, and getting it wrong reboots the node.
+
+**`CONFIG_HALOW_PS_MODE=n` is required on this HAT, and `sdkconfig.defaults` sets it.** The
+component's `Kconfig` (L20-27) gives that symbol `default true` gated only on `MM_WAKE >= 0` and
+`MM_BUSY >= 0` — which the pin table above satisfies — while its own help text says it "can only be
+set to true for devices which have the BUSY and WAKE pins connected." On rev V3.0 they are not.
+Left at the default, the driver deasserts a WAKE line the module ignores (R9 holds `WAKEUP_IN`
+high, so it never sleeps) while disabling its own SPI interrupt, and waits on a BUSY edge that
+cannot arrive from a pin tied to GND. The bus errors that follow escalate through
+`comms_op_check()` → health check → `mmdrv_host_hw_restart_required()`, which ends in an
+`MMOSAL_ASSERT` — and a failed assert in this SDK calls `esp_restart()`, not an error return. The
+node boot-loops a second or two after `Attempting to connect to: <ssid>`. The full citation chain is
+in the comment above the setting in [`../sdkconfig.defaults`](../sdkconfig.defaults).
+
+With power-save off the WAKE/BUSY GPIO setup and the BUSY ISR are compiled out entirely, so the
+floating GPIO 5 stops mattering — the driver no longer configures or samples it.
 
 **If you use a different HaLow HAT**, do not hand-edit these numbers. Copy the matching file from
 that same `configs/` directory in the fetched component (they ship configs for XIAO C3/C6/C5 and
@@ -307,6 +320,17 @@ HaLow radio in AP mode ([`PI_SIDE.md`](PI_SIDE.md)).
 | Solid on | Uplink up — associated and leased | Step 4 |
 
 All three instruments read the same link state, so they never disagree.
+
+**One ambiguity worth knowing about:** a node that is *rebooting in a loop* also shows a repeating
+triple-blink, because it dies during the ~2 s window in which the link state is still
+`RADIO_FAILED`. It never survives long enough to reach the slow blink, so the LED looks identical
+to a radio that genuinely failed to initialize. The web UI can't tell them apart either — its log
+ring lives in RAM and is rebuilt from scratch on every boot, so a fetch just after a reset returns
+a plausible-looking log that simply stops. **Only the serial console distinguishes them**, via the
+reset reason at the top of each cycle. If the log ends shortly after
+`Attempting to connect to: <ssid>` with the radio's version banner printed above it, the radio is
+fine and the node is resetting — see `CONFIG_HALOW_PS_MODE` in Part 1 and the brownout note under
+"Power".
 
 ## Step 0 — Confirm the Pi side first
 

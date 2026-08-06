@@ -43,6 +43,67 @@ CONFIG_MM_SPI_IRQ=3
 CONFIG_MM_BCF_FILE="bcf_fgh100mhaamd.bin"
 CONFIG_MM_CHIP_MM6108=y
 
+# Power-save OFF, because this HAT does not wire the two pins it needs.
+#
+# This is NOT in the vendor's board file and is NOT cleanup - do not drop it.
+# The component's own Kconfig (halow/Kconfig L20-27) declares:
+#
+#     config HALOW_PS_MODE
+#         bool "Enable Morse Micro HaLow Powersave Mode"
+#         default true
+#         depends on MM_WAKE >= 0
+#         depends on MM_BUSY >= 0
+#         help
+#             This can only be set to true for devices which have the BUSY and
+#             WAKE pins connected.
+#
+# Both dependencies are satisfied by the CONFIG_MM_WAKE=2 / CONFIG_MM_BUSY=5
+# above, so without this line the symbol takes its `default true` and
+# power-save runs. But on the Seeed HAT (WI-FI_HALOW_FGH100M_EXT01 rev V3.0)
+# those two links are the board's only DNP resistors - R10 (D1->WAKEUP_IN) and
+# R17 (D4->BUSY) are unpopulated, with WAKEUP_IN pulled high through R9 and
+# BUSY pulled to GND through R15 (see design/HARDWARE.md). The precondition in
+# that help text is therefore not met: the driver drives and samples pins that
+# reach nothing.
+#
+# What that costs at runtime, reading the driver:
+#   - morse_ps_sleep() (morselib src/driver/morse_driver/ps.c) deasserts WAKE
+#     and calls morse_trns_set_irq_enabled(false). The module ignores the WAKE
+#     line - R9 holds WAKEUP_IN high, so it never actually sleeps - and keeps
+#     running while the host has stopped servicing its SPI interrupt.
+#   - morse_ps_wakeup() -> morse_ps_wait_after_wake_pin_raise() then blocks on
+#     a semaphore given only by the BUSY edge ISR, which cannot fire on a pin
+#     tied to GND, so every wake burns the full chip wakeup delay.
+#
+# Bus errors accumulated that way reach comms_op_check() (transport/sdio.c
+# L120-137) -> mmdrv_host_health_check_required() -> a failed health check ->
+# mmdrv_host_hw_restart_required(), whose handler ends in
+# MMOSAL_ASSERT(mmdrv_init(...) == MMWLAN_SUCCESS) (umac/umac_mmdrv_shim.c
+# L89). A failed assert is not a returned error here: mmosal_impl_assert()
+# calls mmhal_reset() -> esp_restart() (shims/mmhal_os.c L45-51), so the whole
+# node reboots. Symptom is a boot loop that starts a second or two after
+# "Attempting to connect to: <ssid>" and never reaches the connect timeout.
+#
+# With this off, the shim compiles out the WAKE/BUSY GPIO setup and the BUSY
+# ISR entirely (shims/mmhal_wlan.c L43-73, L288-326) and mmhalow_init() calls
+# mmwlan_set_power_save_mode(MMWLAN_PS_DISABLED) (mmhalow.c L199-201).
+# The cost is real - no radio power save, which matters for a battery build -
+# and the fix if that becomes the binding constraint is populating R10/R17 on
+# the HAT, not flipping this back.
+#
+# Upstream does offer a second way out. shims/CMakeLists.txt L36-44 rejects a
+# build that sets exactly one of the two pins, with: "MM_WAKE and MM_BUSY pins
+# need to either both be defined and routed for power saving, or both need to
+# be disabled (-1 defaut definition) to mark this as intentional and forgoe
+# power saving" [sic]. So CONFIG_MM_WAKE=-1 + CONFIG_MM_BUSY=-1 would also
+# work, and would make power-save structurally unselectable rather than merely
+# off. It is deliberately not what's done here: it edits the pin numbers copied
+# verbatim from upstream's board config, which is the one part of this file
+# design/HARDWARE.md tells you never to hand-edit, and it would imply D1/D4 are
+# free pads when a later HAT revision could populate R10/R17. Disabling the
+# feature while leaving the pin map alone keeps both documents honest.
+CONFIG_HALOW_PS_MODE=n
+
 # HaLow needs a regulatory/country code to know its legal channel list
 # (DESIGN.md §6.5). This is a *build-time* setting - unlike uplink
 # SSID/security it cannot be changed later via gwcfg-* at runtime, because
