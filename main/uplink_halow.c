@@ -210,13 +210,33 @@ static esp_err_t halow_sta_connect(TickType_t timeout_ticks)
     }
     xSemaphoreTake(s_connect_sem, 0); /* drain any stale signal before retrying */
 
+    /* Already associated: a previous attempt's association can complete during
+     * the backoff sleep, after its timeout was declared. mmhalow_connect() ->
+     * mmwlan_sta_enable() must not be re-issued in that state - mmwlan.h
+     * (v2.11.2-esp32-2, above mmwlan_sta_enable): "If station mode is already
+     * enabled when this function is invoked then it will disconnect from (if
+     * already connected) and initiate connection" - i.e. it would tear down
+     * the working link we just got. */
+    if (s_associated) {
+        return ESP_OK;
+    }
+
     esp_err_t err = mmhalow_connect(mm_sta_state_cb);
     if (err != ESP_OK) {
         return err;
     }
 
     if (xSemaphoreTake(s_connect_sem, timeout_ticks) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
+        /* The wait timing out doesn't prove association failed - it can land
+         * in the gap between the timeout expiring and this check. Declaring
+         * failure here would loop back into mmhalow_connect() and tear the
+         * fresh association down (see the mmwlan.h citation above), so trust
+         * the state flag over the semaphore. If association reliably takes
+         * longer than HALOW_CONNECT_TIMEOUT_MS the retry loop still converges:
+         * each mmwlan_sta_enable() restarts the driver's internal scan cycle,
+         * and whichever attempt completes during a backoff window is accepted
+         * by the s_associated checks instead of being discarded. */
+        return s_associated ? ESP_OK : ESP_ERR_TIMEOUT;
     }
 
     /* The callback signals both outcomes, so a successful take doesn't by
