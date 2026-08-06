@@ -91,6 +91,13 @@ them without reading it.
 - **Comments explain *why*, and cite sources for non-obvious API behaviour.** The existing code does
   this heavily — match it. A comment that restates the code is noise; one that says which upstream
   file proves the call is correct is what stops the next person reverting a subtle fix.
+- **Comments in the C sources cost zero flash — don't thin them to save space.** Measured, not
+  assumed: stripping all 54,880 bytes of comments from `main/*.c`/`*.h` and rebuilding produced a
+  binary of *identical* size, differing only in the ELF hash, the image checksum, and a few
+  embedded `__LINE__` values. The preprocessor discards comments before codegen.
+  **`main/web_ui.html` is the one exception**, because it's embedded verbatim — and
+  `main/minify_web_ui.py` already strips the embedded copy at build time (~24%), so the source file
+  should stay commented too. Don't delete that build step, and don't hand-minify the source.
 - **Bump `GW_CONFIG_VERSION`** (`main/gw_config.h`) whenever `gw_config_t`'s layout *or the meaning
   of a field* changes. Stored config is discarded on mismatch, which is deliberate.
 - **New GPIO goes in `main/board.h`** and must not collide with the `CONFIG_MM_*` pins (1, 2, 3, 4,

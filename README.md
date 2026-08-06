@@ -195,7 +195,9 @@ main/
 ├── factory_reset.c      BOOT-button hold restores default config
 ├── log_buffer.c         in-RAM ring of recent logs, served at /api/log
 ├── web_ui.c             on-device HTTP config UI, SoftAP clients only (same NVS config as gwcfg-*)
-└── web_ui.html          embedded into the firmware image, not a separate filesystem
+├── web_ui.html          embedded into the firmware image, not a separate filesystem
+└── minify_web_ui.py     build step: strips comments/indentation from the *embedded copy* of
+                        web_ui.html (~24%), leaving the source file commented
 partitions.csv           dual-OTA: 2x 3MB app slots + otadata + 64K coredump (app is at 0x20000)
 docs/
 └── index.html           ESP Web Tools browser flasher page (single US build)
