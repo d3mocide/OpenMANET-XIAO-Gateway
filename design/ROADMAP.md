@@ -18,10 +18,15 @@ belongs in git history, not here — this file describes the present and the pla
 component: **zero errors, zero warnings**, binary ~1.67 MB, **44% free** in the 3 MB app
 slot on confirmed 8 MB flash. Verified by actually running the build, not by reading code.
 
-**Nothing has ever been flashed to physical hardware.** A compiling build proves the code is
-internally consistent against the real APIs. It does not prove the radio associates, DHCP
-completes, or NAT and the CoT relay pass traffic. Everything in the checklist below is
-hardware-only from here.
+**First hardware bring-up is under way.** Steps 1 and 4 have passed on a real XIAO ESP32-S3 +
+WM6108: the MM6108 answers over SPI with its version banner, and the SoftAP leases addresses and
+serves the web UI. A compiling build proves the code is internally consistent against the real
+APIs; it does not prove the radio associates, DHCP completes, or NAT and the CoT relay pass
+traffic. Everything remaining in the checklist below is hardware-only from here.
+
+The first thing hardware taught us wasn't in the firmware at all: the HaLow HAT's unpopulated
+WAKE/BUSY links make the SDK's *default* power-save setting reboot the node in a loop, which
+presents identically to a dead radio. See `CONFIG_HALOW_PS_MODE` under "Settled decisions".
 
 **It also doesn't prove the code means what it says.** Three separate passes have now found bugs in
 clean-compiling firmware that would each have failed silently on hardware and looked like a radio
@@ -52,7 +57,8 @@ not by re-reading this repo. Assume the same class of error exists elsewhere. Se
 | App wiring | `main/app_main.c` | Brings up log buffer, LED, factory-reset watcher, SoftAP, console and web UI immediately; NAT + CoT relay once the uplink holds a DHCP lease, retrying on the next reconnect if that fails. Skips the reconnect task entirely if the radio never initialized. |
 | Web flasher + CI | `docs/`, `country-configs/`, `.github/workflows/` | ESP Web Tools page with a region picker; GitHub Actions builds one firmware per region (9 regdb-defined domains) and deploys to Pages. Builds on PRs too (US only). |
 
-Everything above compiles clean. **None of it has been run on hardware.**
+Everything above compiles clean. **Steps 1 and 4 have now passed on hardware** (see the checklist);
+the rest is unrun.
 
 ## Build-order checklist
 
@@ -64,15 +70,20 @@ runbook. **The step numbers are shared** — if you renumber one, renumber the o
 - [ ] **Step 0** — Confirm the Pi's HaLow radio config: AP mode, SSID, security mode, country,
       DHCP behaviour. See [`PI_SIDE.md`](PI_SIDE.md) "Still to verify". Flash the region build that
       matches the Pi's regulatory domain.
-- [ ] **Step 1** — Radio responds over SPI (`gwcfg-radio`). Rules out wiring/pins/BCF/chip in one
-      command. The `CONFIG_MM_*` values match upstream's config for this exact board pairing but
-      have never been run against a physical board.
+- [x] **Step 1** — Radio responds over SPI (`gwcfg-radio`). **Passed.** On a Seeed XIAO ESP32-S3 +
+      WM6108 (Quectel FGH100M-H), the boot banner reports BCF API 8.0.0, morselib 2.11.2, Morse
+      firmware 1.17.8 and chip ID `0x0306`, so the `CONFIG_MM_*` pin map, the BCF file and the chip
+      selection are all confirmed against physical hardware. Note the BCF's board description reads
+      `mf16858`, *not* a Quectel part number — that is Morse Micro's internal board ID inside
+      `bcf_fgh100mhaamd.bin` itself (`.board_desc` in the shipped file), not a mismatch.
 - [ ] **Step 2** — The Pi's AP is visible (`gwcfg-scan`). Proves the radio receives, and says
       whether the AP is on a channel this build may legally use.
 - [ ] **Step 3** — HaLow STA associates, then gets a DHCP lease. Two separate milestones, reported
       separately (`searching` vs. `associated, no lease`) because they have different causes.
-- [ ] **Step 4** — Local SoftAP and DHCP validated standalone (phones join, get a lease, reach the
-      web UI). Doesn't depend on steps 0–3 — the natural first hardware test.
+- [x] **Step 4** — Local SoftAP and DHCP validated standalone (phones join, get a lease, reach the
+      web UI). **Passed** — `xiao-gateway` comes up on channel 6, a client associates and is leased
+      `172.16.50.2`, and the web UI is reachable. Doesn't depend on steps 0–3 — the natural first
+      hardware test.
 - [ ] **Step 5** — NAT validated: a phone gets outbound mesh reach. **Test IP reachability and
       name resolution separately** — they fail independently, and DNS propagation was missing
       entirely until recently. Confirm translated source addresses actually appear mesh-side.
@@ -230,6 +241,17 @@ Recorded so they aren't relitigated, and so they aren't accidentally undone.
   `CONFIG_HALOW_COUNTRY_CODE` from Kconfig before the radio scans; there is no per-connection
   channel argument in the STA connect API. The web flasher's region picker is the mechanism, by
   design.
+- **`CONFIG_HALOW_PS_MODE=n`, and it is not in the vendor's board file.** The component defaults it
+  *on* whenever `CONFIG_MM_WAKE`/`CONFIG_MM_BUSY` are set — which upstream's own Seeed board config
+  does — but its help text requires those pins to be physically connected, and on the HAT
+  (rev V3.0) R10 and R17 are the board's only DNP resistors. Running power-save against pins that
+  reach nothing lets the host stop servicing the SPI interrupt while the module is still awake;
+  the resulting bus errors escalate to an `MMOSAL_ASSERT`, which in this SDK calls `esp_restart()`
+  rather than returning an error, so the node boot-loops shortly after the connect attempt starts.
+  **This looks exactly like a radio failure and is not one** — the radio initializes fine first.
+  Do not remove the setting to "match upstream's board file"; the citation chain is in
+  `sdkconfig.defaults` and [`HARDWARE.md`](HARDWARE.md). The correct way to get power-save back is
+  to populate R10/R17.
 
 ### Observability
 
@@ -257,9 +279,9 @@ Recorded so they don't get "fixed" by accident.
   can't be distinguished from "clear it", and "keep" is the safe reading. The console can do it:
   `gwcfg-set-softap <ssid> -`. The page says so next to the field.
 - **No OTA delivery.** Layout is ready, mechanism is blocked on auth by choice, not effort.
-- **The `CONFIG_MM_*` pin/BCF config has never been checked against a physical board.** It is a
-  verbatim copy of upstream's config for this exact pairing, which is the best available evidence
-  short of running it. `gwcfg-radio` is the check — see [`HARDWARE.md`](HARDWARE.md).
+- **No radio power save.** `CONFIG_HALOW_PS_MODE=n` is forced off because the Seeed HAT leaves the
+  WAKE and BUSY links unpopulated — see the settled decision below. Current draw is higher than the
+  hardware could achieve, and that is the accepted price of not boot-looping.
 - **`GW_CONFIG_VERSION` bumps discard stored config.** Deliberate: a layout or default change that
   silently reinterpreted an existing blob would be worse. Reprovision after a bump.
 
