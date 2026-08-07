@@ -6,7 +6,7 @@ you're picking the project back up.**
 - Companion docs: [`HARDWARE.md`](HARDWARE.md) (what to buy, how to build one, how to bring it up),
   [`PI_SIDE.md`](PI_SIDE.md) (the other end of the link)
 - Architecture diagram and repo layout: [`../README.md`](../README.md)
-- **Last updated:** 2026-08-06
+- **Last updated:** 2026-08-07
 
 Keep this file current: tick the checklist when a step passes, move an item out of "not built yet"
 when it lands, and add to "settled decisions" rather than re-arguing one. Historical detail
@@ -27,6 +27,13 @@ WM6108: the MM6108 answers over SPI with its version banner, and the SoftAP leas
 serves the web UI. A compiling build proves the code is internally consistent against the real
 APIs; it does not prove the radio associates, DHCP completes, or NAT and the CoT relay pass
 traffic. Everything remaining in the checklist below is hardware-only from here.
+
+**Stability confirmed under real, concurrent load.** Running off a PC's USB cable (no Pi present)
+with a phone associated to the SoftAP and the HaLow radio initialized and periodically scanning,
+the node stays up indefinitely — no reboot loop, no crash. This was the failure mode the
+`CONFIG_HALOW_PS_MODE` fix (see "Settled decisions") targeted, and it holds with the SoftAP,
+DHCP server, web UI and HaLow radio all running at once, not just at idle. **Next phase is
+bringing up the Pi and testing the HaLow uplink against it — checklist steps 0 through 3.**
 
 The first thing hardware taught us wasn't in the firmware at all: the HaLow HAT's unpopulated
 WAKE/BUSY links make the SDK's *default* power-save setting reboot the node in a loop, which
@@ -87,7 +94,9 @@ runbook. **The step numbers are shared** — if you renumber one, renumber the o
 - [x] **Step 4** — Local SoftAP and DHCP validated standalone (phones join, get a lease, reach the
       web UI). **Passed** — `xiao-gateway` comes up on channel 6, a client associates and is leased
       `172.16.50.2`, and the web UI is reachable. Doesn't depend on steps 0–3 — the natural first
-      hardware test.
+      hardware test. Since re-confirmed running for an extended period on USB power with a client
+      associated and the HaLow radio concurrently up and scanning — no reboot loop, no crash.
+      **Next up: steps 0–3, which need the Pi side present.**
 - [ ] **Step 5** — NAT validated: a phone gets outbound mesh reach. **Test IP reachability and
       name resolution separately** — they fail independently, and DNS propagation was missing
       entirely until recently. Confirm translated source addresses actually appear mesh-side.
