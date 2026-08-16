@@ -315,10 +315,21 @@ under development; breaking changes may be introduced," and while ESP32-S3+MM610
 specifically on this exact chip pairing isn't proven on real hardware the way STA mode already is.
 Budget bring-up time for GW_ROLE_RELAY like any other untested path in this project (see
 `design/HARDWARE.md`'s runbook pattern) before trusting it in the field. First things to check on
-real hardware, in order: does `mmhalow_wifi_start()` actually bring the AP up on air (it returns
-`void`, so `downlink_halow_ap_is_started()` only means "we called it," not confirmation); does a
-leaf XIAO's `gwcfg-scan` find it; does association complete; does the static-IP-on-both-ends scheme
-actually pass traffic once associated.
+real hardware. Procedure and pass/fail criteria for each is in
+[`HARDWARE.md`](HARDWARE.md) Part 3 - same relationship as the main checklist above has to
+`HARDWARE.md` Part 2: this is the tracker, that is the runbook.
+
+- [ ] **Tier 0** - does `mmhalow_wifi_start()` actually bring the HaLow AP up on air at all (it
+      returns `void`, so `downlink_halow_ap_is_started()` only means "we called it," not
+      confirmation)? Two XIAOs, no Pi, no Wi-Fi network needed - the cheapest, most isolated check
+      of the alpha AP-mode API by itself.
+- [ ] **Tier 1** - does a leaf's `gwcfg-set-uplink` against that AP actually associate, and does the
+      static-IP-on-both-ends addressing scheme (no DHCP server on a relay's HaLow AP - see
+      `main/downlink_halow_ap.h`) actually pass traffic once associated?
+- [ ] **Tier 2** - the full chain against *any* ordinary Wi-Fi network on the relay's uplink side
+      (still no Pi needed) - first real-hardware run of the NAT/DNS/CoT-relay pipeline at all.
+- [ ] **Tier 3** - the actual target scenario: swap "any Wi-Fi network" for the Pi's own local AP.
+      Only meaningful once item 0's AP-mode workaround is confirmed on the real Pi.
 
 Both the client and relay roles keep every known HaLow constraint from `PI_SIDE.md`: security must
 be `open`/`owe`/`sae` (no PSK), region is fixed `US`, and phones behind any leaf XIAO stay NAT'd

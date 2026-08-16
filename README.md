@@ -150,29 +150,86 @@ Reboot after saving (either transport) for uplink/SoftAP changes to take effect.
 
 ### Node roles: client and relay
 
-One firmware image, one config field (`gwcfg-set-role client|relay`, or the web UI's Node → Role):
+One firmware image, one config field (`gwcfg-set-role client|relay`, or the web UI's Node → Role) -
+never a separate build. Every image carries both roles' code; `role` just picks which bring-up path
+`app_main()` takes at boot, exactly like any other stored setting.
 
-- **client** (the default, and everything described above) - local SoftAP for phones/ATAK devices,
-  HaLow STA uplink to a Pi's (or a relay's) HaLow AP.
+- **client** (the default for every factory-fresh or factory-reset node, and everything described
+  above) - local SoftAP for phones/ATAK devices, HaLow STA uplink to a Pi's (or a relay's) HaLow AP.
 - **relay** - for when the Pi itself can't run a HaLow AP at all (see `design/PI_SIDE.md` item 0).
-  A relay joins the Pi's own local Wi-Fi directly as an ordinary client, and offers its own HaLow
-  radio as an AP that other, unmodified client-role XIAOs associate to instead of a Pi - so
-  field-deployed leaf nodes still get HaLow's actual range, with only the relay-to-Pi hop riding
-  short-range Wi-Fi. See `design/ROADMAP.md` item 8 for the full design and its current status:
-  **built and `idf.py build`-verified, not yet proven on real hardware** - Morse Micro's own HaLow
-  AP-mode API is marked alpha.
+  A relay joins some Wi-Fi AP directly as an ordinary client - a Pi's local AP, or literally any
+  other Wi-Fi network, `main/uplink_wifi.c` has nothing Pi-specific in it - and offers its own HaLow
+  radio as an AP that other, unmodified client-role XIAOs associate to instead of a Pi. A
+  field-deployed leaf still gets HaLow's actual range to reach the relay; only the relay's own
+  uplink hop rides short-range Wi-Fi. Two XIAOs and no Pi at all is a legitimate deployment on its
+  own - a HaLow Wi-Fi extender, not only an OpenMANET compatibility shim. See `design/ROADMAP.md`
+  item 8 for the full design and its current status: **built and `idf.py build`-verified, not yet
+  proven on real hardware** - Morse Micro's own HaLow AP-mode API is marked alpha. Bring-up runbook
+  (tiered, cheapest first, no Pi needed for the first two tiers): `design/HARDWARE.md` Part 3.
+
+#### Setting up a relay + leaf pair
+
+**Configure the relay first, entirely while it's still reachable as a client.** The config struct
+always holds both roles' fields regardless of which is active, so nothing stops you from filling in
+the relay-only fields before switching `role` - and you should, because once a node becomes a relay
+its local SoftAP goes away and it stops being a network anything can just join.
+
+On the node that will become the relay, while still connected to its default SoftAP
+(`xiao-gateway` / `openmanet`) at `http://172.16.50.1/`:
+
+1. Fill in the Wi-Fi uplink section (SSID/password of whatever AP it'll join) and the HaLow AP
+   section (SSID/security/passphrase/op-class/channel). Get legal (op-class, channel) values for
+   this build's region from the serial console first - `gwcfg-list-halow-channels` isn't in the web
+   UI yet.
+2. Set Role to "relay" in the same form.
+3. Click Save once - the form POSTs every section together, so this single save persists the
+   relay's Wi-Fi-uplink config, HaLow-AP config, and the role change all at once.
+4. Reboot.
+
+Equivalently, over the console:
 
 ```
-xiao-gw> gwcfg-set-role relay
-xiao-gw> gwcfg-set-wifi-uplink <pi-local-ssid> <psk|->
+xiao-gw> gwcfg-set-wifi-uplink <target-ssid> <psk|->
 xiao-gw> gwcfg-list-halow-channels
 xiao-gw> gwcfg-set-halow-ap <ssid> <psk|-> <open|sae> <op_class> <s1g_chan_num>
+xiao-gw> gwcfg-set-role relay
 xiao-gw> gwcfg-save
 ```
 
-A leaf pointed at a relay (rather than a real Pi) needs one extra step, since the relay's HaLow AP
-runs no DHCP server: `gwcfg-set-uplink-static-ip <ip> <gateway> <netmask>` on the leaf, using an
-address in the relay's HaLow AP subnet.
+It comes back up already configured: SoftAP gone, native Wi-Fi joining the target AP, HaLow
+advertising as an AP - no second round of setup needed after the reboot.
+
+Then configure each leaf exactly like any other client-role node (see above), pointing its uplink
+at the relay's HaLow SSID instead of a Pi's, with one addition: since a relay's HaLow AP runs no
+DHCP server (see `design/ROADMAP.md` item 8 for why), give it a static address in that subnet too:
+
+```
+xiao-gw> gwcfg-set-uplink <relay-halow-ssid> <psk|-> <open|sae>
+xiao-gw> gwcfg-set-uplink-static-ip <ip> <gateway> <netmask>
+xiao-gw> gwcfg-save
+```
+
+#### Reconfiguring a relay later
+
+A leaf's SoftAP is always there, unaffected by any of this - reconfigure it exactly like before, any
+time. A deployed relay is harder to reach, since it no longer runs a phone-joinable AP. Three ways
+back in, easiest first:
+
+1. **A leaf already associated to it.** Its traffic is NAT'd behind its own static IP in the relay's
+   HaLow AP subnet, which *is* in-subnet from the relay's point of view - so a phone behind that leaf
+   can browse straight to the relay's HaLow AP address (its configured `ip`, default
+   `172.16.60.1`) and reach the relay's web UI through it.
+2. **USB serial console.** Always works regardless of role - the reliable fallback if no leaf is up
+   yet, or you don't have one handy.
+3. **Physical recovery, if the above aren't available or the config is simply wrong**: hold the
+   **BOOT button for 5 seconds**. This resets *all* config to defaults, including `role` back to
+   `client` - so a relay you can't otherwise reach is one button-hold away from a node you can join
+   over its own SoftAP again, the same recovery path any other node has.
+
+There's no dedicated "always reachable regardless of role" management path yet (a small local AP on
+the relay's own native radio, run concurrently with its Wi-Fi uplink, would add one) - not built
+because the workflow above already covers first-time setup, and it's only ongoing field
+reconfiguration that would benefit from it.
 
 ## Diagnosing a node
 
