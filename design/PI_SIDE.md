@@ -61,6 +61,16 @@ The XIAO does not participate in `bat0` itself — it only holds an uplink IP in
   someone has actually fitted two WM6108 HATs (or another dual-HaLow-radio board) to that specific
   Pi. Don't assume a spare HaLow radio exists — check `iw dev` for how many `mm6108`/S1G-band
   interfaces are actually present before planning around one.
+- **The module match is exact, not just same-family.** User-confirmed 2026-08-16: this specific
+  Pi's HaLow HAT and the XIAO's HaLow module are both literally **Quectel FGH100M-H** — the same
+  part, not just "both Morse Micro MM6108" in the abstract. This meaningfully derisks item 3 below:
+  the FGH100M-H is the **-H** variant, whose BCF (`bcf_fgh100mhaamd.bin`) only carries real
+  calibration for **US** (see `HARDWARE.md` "Regulatory domain" — the non-`-H` FGH100M has separate
+  EU/JP BCFs, this part doesn't). So this Pi's regulatory domain isn't merely *supposed* to be US to
+  match the XIAO, it's **hardware-incapable of being anything else that actually works** — a non-US
+  `country` setting in `openmanetd` would hit the same silent, empty-calibration failure mode
+  documented for the XIAO side, not a working alternate region. One less thing to chase if the AP
+  workaround in item 0 doesn't pan out for some other reason.
 - **ESP32 HaLow cannot do STA-to-STA direct links** (confirmed by Morse's own team). This is why
   the Pi-side AP requirement is not optional.
 - **HaLow has no WPA2-PSK.** Verified against the real `morsemicro/halow` SDK source rather than
@@ -160,6 +170,11 @@ Check with `uci show wireless`, `iw dev`, `iw list`, `batctl if` on the Pi.
    fixed on the Pi, not the XIAO: the XIAO is US / 902–928 MHz and cannot be built otherwise.** Its
    module is a Quectel FGH100M-H, a 902–928 MHz part whose BCF carries US calibration only — see
    [`HARDWARE.md`](HARDWARE.md) "Regulatory domain". So the Pi's HaLow radio must run **US**.
+   **Largely derisked 2026-08-16** (see the module-match point above): this specific Pi's HaLow
+   module is confirmed to also be a Quectel FGH100M-H, the same US-only `-H` part as the XIAO's —
+   so it isn't just supposed to match, it's hardware-incapable of a working non-US configuration.
+   Still worth a `gwcfg-scan`/`morse-regdb` sanity check once the AP-mode question (item 0) is
+   settled, but no longer a likely independent cause of a failed scan on this pairing.
 
    **Unlike 1/2/4 this is not NVS-provisioned on the XIAO side** — confirmed by reading
    `mmhalow_init()` in the real SDK: there is no per-connection channel argument in the STA connect
