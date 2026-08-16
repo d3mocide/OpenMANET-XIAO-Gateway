@@ -9,7 +9,7 @@ whenever you move an item from the second list to the first.
 
 - Companion docs: [`ROADMAP.md`](ROADMAP.md) (status and what's next),
   [`HARDWARE.md`](HARDWARE.md) (the XIAO side, and the bring-up runbook)
-- **Last updated:** 2026-08-05
+- **Last updated:** 2026-08-16
 
 ## The link, in one paragraph
 
@@ -52,6 +52,27 @@ The XIAO does not participate in `bat0` itself — it only holds an uplink IP in
   its docs: `enum mmwlan_security_type` in `mmwlan.h` defines only `MMWLAN_OPEN`, `MMWLAN_OWE` and
   `MMWLAN_SAE`. The real option set is **open / OWE / SAE**. Early drafts of this project's design
   said "open / WPA2-PSK / WPA3-SAE", which was wrong.
+- **openmanetd's own config API can select an encryption mode the XIAO can never use, and won't stop
+  you.** Confirmed by reading `openmanet.wifi_config.v1`'s `wifi_config.proto`
+  (`github.com/OpenMANET/protobufs`, fetched 2026-08-16): `RadioSettings.encryption` is a
+  `WifiEncryption` enum with `SAE`, `PSK2`, `PSK`, `PSK_MIXED`, `NONE` and `OWE` as options - `PSK2`/
+  `PSK`/`PSK_MIXED` are all WPA(2)-PSK variants, none of which the XIAO's Morse SDK can associate
+  with (see the point above). The API doesn't validate that against the radio's actual PHY, so a Pi
+  HaLow radio configured with `PSK2` will simply never be joinable by this firmware - indistinguishable
+  from a regulatory-domain or antenna problem from the XIAO's side. **The Pi's HaLow AP radio must be
+  set to `SAE`, `OWE`, or `NONE`.**
+- **A single HaLow radio on the Pi is one `WifiMode`, not a combination.** Also from
+  `wifi_config.proto`: `RadioSettings.mode` is a `WifiMode` enum - `AP` / `Mesh` / `STA` / `Adhoc` /
+  `Monitor` - and the message carries separate `ssid` ("SSID (network name)") and `mesh_id` ("Mesh ID
+  (only for mesh-mode radios)") fields used depending on which mode is selected. `ListRadios` can
+  return more than one physical radio per device (example IDs `radio0`/`radio1`/`radio2` in the
+  service definition), so a Pi with two HaLow radios can dedicate one to `Mesh` (the 802.11s backbone
+  to other Pis) and the other to `AP` (for XIAO leaf nodes) - but one radio's `RadioSettings` cannot
+  be both at once through this API. **If a Pi has only one HaLow radio and it's set to `Mesh` mode,
+  there is no AP for the XIAO's STA to associate to at all** - `gwcfg-scan` finds nothing, which is
+  the first thing to check before suspecting the regulatory domain or hardware. This sharpens item 4
+  below rather than answering it: it shows the *config model* is one-mode-per-radio, not whether a
+  given Pi's driver/hardware can run AP+Mesh concurrently on one radio (still unconfirmed).
 
 ## Still to verify
 
@@ -84,7 +105,12 @@ Check with `uci show wireless`, `iw dev`, `iw list`, `batctl if` on the Pi.
 4. **Once a second Pi joins the mesh**: does a Pi's HaLow radio need to run mesh-point (backbone)
    *and* AP (for XIAO nodes) concurrently on one radio (mac80211 multi-vif), or does each XIAO
    always pair to one specific Pi? Check vif-combination support (`iw list`) at that point. Doesn't
-   block a single-Pi build.
+   block a single-Pi build. **Narrower and more urgent than it looks**: `openmanetd`'s own
+   `wifi_config.proto` (see above) models one radio as one `WifiMode`, so even a *single*-Pi build
+   needs that Pi's HaLow radio actually set to `AP` mode with `SAE`/`OWE`/`NONE` encryption - not
+   `Mesh` mode, and not a `PSK`/`PSK2` encryption choice the UI will happily let you pick. Check with
+   `openmanetd`'s `GetRadioSettings`/dashboard, or `iw dev` / `hostapd_cli -i <ifname> status` on the
+   Pi directly, before assuming a scan failure is regulatory or hardware.
 
 ## What the XIAO does *not* get from the Pi
 
