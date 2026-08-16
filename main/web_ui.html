@@ -350,6 +350,10 @@
       <div class="stat-label">Region / slot</div>
       <div class="stat-value" id="stRegion">&mdash;</div>
     </div>
+    <div>
+      <div class="stat-label">Firmware</div>
+      <div class="stat-value" id="stVersion">&mdash;</div>
+    </div>
   </div>
 </div>
 
@@ -577,6 +581,12 @@ async function loadStatus() {
       el('stUptime').textContent = fmtUptime(s.system.uptime_s);
       el('stHeap').textContent = Math.round(s.system.heap_free / 1024) + ' KB';
       el('stRegion').textContent = (s.system.country || '??') + ' / ' + (s.system.partition || '?');
+      // Build-time PROJECT_VER, `git describe --always --tags --dirty` against
+      // this repo (tools/cmake/third_party/GetGitRevisionDescription.cmake) -
+      // no tags exist yet, so this is a short commit hash, +"-dirty" if the
+      // build tree had uncommitted changes. Lets you confirm what's actually
+      // running matches what the web flasher page said it would flash.
+      el('stVersion').textContent = s.system.version || 'unknown';
     }
   } catch (e) {
     setDot('dotUplink', false);

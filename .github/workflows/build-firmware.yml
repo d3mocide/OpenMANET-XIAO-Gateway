@@ -91,10 +91,18 @@ jobs:
           check_part "$APP_OFFSET" xiao_halow_gateway.bin
 
           VERSION="$(git rev-parse --short HEAD)"
+          COMMIT="$(git rev-parse HEAD)"
+          BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # "commit"/"built_at" are extra fields ESP Web Tools' manifest
+          # schema doesn't define (it only reads name/version/builds) but
+          # ignores harmlessly - docs/index.html reads them itself to show
+          # what it's about to flash before the user clicks Connect & Flash.
           cat > site/manifest.json <<EOF
           {
             "name": "XIAO HaLow Gateway (US)",
             "version": "${VERSION}",
+            "commit": "${COMMIT}",
+            "built_at": "${BUILT_AT}",
             "builds": [
               {
                 "chipFamily": "ESP32-S3",

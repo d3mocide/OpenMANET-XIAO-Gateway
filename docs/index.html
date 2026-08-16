@@ -179,6 +179,13 @@
     color: var(--color-muted);
   }
 
+  .fw-meta {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    margin: 0 0 1.5rem;
+  }
+
   ol.steps {
     list-style: none;
     padding: 0;
@@ -236,6 +243,8 @@
   typed into this page.
 </div>
 
+<p class="fw-meta" id="fwMeta">Checking firmware version&hellip;</p>
+
 <esp-web-install-button manifest="manifest.json">
   <button slot="activate" class="flash-btn">Connect &amp; Flash</button>
   <span slot="unsupported" class="unsupported">
@@ -265,6 +274,9 @@
   <li><span>Set the uplink security/passphrase (open/OWE/SAE only — see the
       <a href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway/blob/main/design/PI_SIDE.md">Pi-side reference</a>
       for what the mesh Pi expects) and your own local Wi-Fi SSID/password, then Save and Reboot.</span></li>
+  <li><span>The config page's Status panel has a <strong>Firmware</strong> field — it should match the
+      commit shown above the Connect &amp; Flash button on this page, confirming the flash actually
+      took.</span></li>
 </ol>
 
 <h2>Reading the on-board LED</h2>
@@ -302,6 +314,38 @@
 </p>
 
 <footer>Firmware built automatically from the repository's <code>main</code> branch.</footer>
+
+<script>
+// manifest.json is generated fresh by .github/workflows/build-firmware.yml on
+// every build - "version"/"commit"/"built_at" come straight from `git
+// rev-parse` and `date -u` in that job, not user input, so building the link
+// href/text from them here is safe. ESP Web Tools itself only reads
+// name/version/builds from this file; commit/built_at are additional fields
+// it ignores, read here instead so this page can show what it's about to
+// flash before the button is clicked.
+(function () {
+  var el = document.getElementById('fwMeta');
+  fetch('manifest.json', { cache: 'no-store' })
+    .then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    })
+    .then(function (m) {
+      var sha = typeof m.commit === 'string' ? m.commit : '';
+      var short = typeof m.version === 'string' ? m.version : (sha ? sha.slice(0, 7) : '?');
+      var label = sha
+        ? '<a href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway/commit/' + sha + '">' + short + '</a>'
+        : short;
+      var built = typeof m.built_at === 'string'
+        ? ' &middot; built ' + m.built_at.replace('T', ' ').replace('Z', ' UTC')
+        : '';
+      el.innerHTML = 'This will flash commit <code>' + label + '</code>' + built + '.';
+    })
+    .catch(function () {
+      el.textContent = '';
+    });
+})();
+</script>
 
 </body>
 </html>
