@@ -6,7 +6,7 @@ you're picking the project back up.**
 - Companion docs: [`HARDWARE.md`](HARDWARE.md) (what to buy, how to build one, how to bring it up),
   [`PI_SIDE.md`](PI_SIDE.md) (the other end of the link)
 - Architecture diagram and repo layout: [`../README.md`](../README.md)
-- **Last updated:** 2026-08-07
+- **Last updated:** 2026-08-16
 
 Keep this file current: tick the checklist when a step passes, move an item out of "not built yet"
 when it lands, and add to "settled decisions" rather than re-arguing one. Historical detail
@@ -322,6 +322,12 @@ Recorded so they don't get "fixed" by accident.
 
 ## Open questions
 
-All Pi-side, all tracked in [`PI_SIDE.md`](PI_SIDE.md): the AP's security mode, DHCP scope and
-whether it offers DNS, the regulatory domain (**this one blocks association outright**), and
-mesh-point + AP concurrency once a second Pi joins.
+All Pi-side, all tracked in [`PI_SIDE.md`](PI_SIDE.md). **Top of the list as of 2026-08-16:**
+whether any current OpenMANET role still exposes a HaLow radio in plain AP mode at all — reading
+OpenMANET's own docs, the "HaLow AP wizard" appears to have been removed, and every HaLow radio is
+now described identically as a `10.41.0.0/16` backbone member. If that holds, it blocks association
+**more fundamentally** than the regulatory domain does, on any Pi, not just once a second one joins
+— see `PI_SIDE.md` "Still to verify" item 0 for the citations and what to check on a real Pi before
+trusting the rest of this list. Below that: the AP's security mode, DHCP scope and whether it offers
+DNS, the regulatory domain (**this one blocks association outright**), and mesh-point + AP
+concurrency once a second Pi joins.
