@@ -18,13 +18,11 @@ HaLow radio presents an **AP**; the XIAO's HaLow radio associates to it as a **s
 Pi and the XIAO separately run their own local 2.4 GHz Wi-Fi AP for directly-attached clients. So
 traffic flows **client → Wi-Fi → XIAO → HaLow → Pi → Wi-Fi → client**, in both directions.
 
-**This "Pi's HaLow radio in AP mode" premise is now contested — see item 0 under "Still to
-verify".** OpenMANET's own published networking docs, as of a 2026-08-16 read, describe every
-HaLow radio as simply living in `10.41.0.0/16` (i.e. a backbone/mesh-point member) and say the
-"HaLow AP wizard" was **removed** from the current release. If that holds for the Pi you're
-pairing with, there may currently be no supported way to expose a plain infrastructure AP on its
-HaLow radio at all — which a STA-only client radio like the XIAO's needs. Confirm on the specific
-Pi before trusting anything else in this file.
+**This "Pi's HaLow radio in AP mode" premise no longer holds out of the box — confirmed 2026-08-16,
+see item 0 under "Still to verify".** No current OpenMANET role or setup wizard exposes a HaLow
+radio in plain AP mode, which is exactly what a STA-only client radio like the XIAO's needs to
+associate to. There's a promising, not-yet-hardware-tested theory for a manual workaround in item 0
+— it's a real gap in the ecosystem, worth raising with OpenMANET, not a bug in this firmware.
 
 The XIAO does not participate in `bat0` itself — it only holds an uplink IP into the mesh.
 
@@ -51,10 +49,18 @@ The XIAO does not participate in `bat0` itself — it only holds an uplink IP in
   first-class citizen on this mesh already, which is good news for the XIAO's application layer.
   There is no existing "lightweight client/sensor node" mode in `openmanetd` — every current node
   is a full Pi.
-- **Same silicon on both ends:** the Pi's WM6108/WM1302 radios and the XIAO's HaLow module are
-  both **Morse Micro MM6108**. PHY/MAC behaviour, channel plan and regulatory config line up
-  directly; the two ends differ only in host stack (Linux mac80211/hostapd on the Pi vs. Morse's
-  embedded SDK on the XIAO).
+- **Same silicon on the HaLow side:** a Pi's WM6108 HaLow HAT and the XIAO's HaLow module are both
+  **Morse Micro MM6108**. PHY/MAC behaviour, channel plan and regulatory config line up directly;
+  the two ends differ only in host stack (Linux mac80211/hostapd on the Pi vs. Morse's embedded SDK
+  on the XIAO). **Correction, 2026-08-16**: an earlier version of this file also named "WM1302" here
+  as a second Morse Micro radio on the Pi. That was wrong — WM1302 is a Semtech **SX1302 LoRa**
+  gateway module (verified against Seeed/Waveshare's own product pages), unrelated silicon, almost
+  certainly there for OpenMANET's separate BLOS/Alfred long-range telemetry path, not the HaLow mesh
+  backbone. **A Pi with only a WM6108 HAT has exactly one Morse Micro radio** — there is no second
+  HaLow radio to freely dedicate to AP mode while leaving the other on the mesh backbone, unless
+  someone has actually fitted two WM6108 HATs (or another dual-HaLow-radio board) to that specific
+  Pi. Don't assume a spare HaLow radio exists — check `iw dev` for how many `mm6108`/S1G-band
+  interfaces are actually present before planning around one.
 - **ESP32 HaLow cannot do STA-to-STA direct links** (confirmed by Morse's own team). This is why
   the Pi-side AP requirement is not optional.
 - **HaLow has no WPA2-PSK.** Verified against the real `morsemicro/halow` SDK source rather than
@@ -91,33 +97,55 @@ not a config value to plug in, it's whether the thing this whole project assumes
 the Pi running as a plain AP — currently exists as an option at all. Everything else on this list is
 moot until item 0 has an answer.
 
-0. **Does any current OpenMANET role still let a HaLow radio run in plain AP mode, at all?**
-   Raised 2026-08-16 while diagnosing a XIAO that gets zero results from `gwcfg-scan` against a Pi
-   set up as a **mesh gate**. Reading OpenMANET's published docs
-   ([`openmanet.github.io/docs/networking`](https://openmanet.github.io/docs/networking)):
-   - *"Bridge mode and the HaLow AP wizard were removed in this release. The mesh gate always NATs
-     the mesh into whatever upstream you plug into `eth0`."* — "mesh gate" here is a router/NAT
-     role for the mesh's **upstream** WAN link (Starlink/LTE/hotel Wi-Fi via `eth0`), which is the
-     *opposite* direction from what the XIAO needs — it is not about client-facing HaLow AP at all,
-     but the wizard that could apparently once configure one has been removed regardless.
-   - *"All HaLow radios live in `10.41.0.0/16`"* — phrased identically for every role, with no
-     distinction between "backbone member" and "AP for a leaf STA." Client-facing access is
-     described exclusively via a **separate** 2.4/5 GHz radio (`br-ahwlan`) or Ethernet, never via
-     HaLow.
-   - The `openmanet.wifi_config.v1` protobuf schema (see "Confirmed" above) still defines
-     `WIFI_MODE_AP` as an enum value, so the underlying capability may still exist even if the
-     guided "wizard" no longer offers it — **this needs checking directly against `openmanetd`'s
-     API/dashboard on the actual Pi**, not inferred from the docs prose alone.
-   - **If no current role exposes HaLow AP mode**, this project's core premise — a STA-only XIAO
-     associating to a Pi's HaLow radio — has no supported counterpart on the Pi today, independent
-     of SSID/key/channel/region being right. That's a different, and more serious, problem than
-     anything else in this file, and is worth raising with OpenMANET directly rather than assuming
-     it's a local misconfiguration.
-   - **This is not a batman-adv problem.** batman-adv runs a layer above 802.11s association; the
-     XIAO deliberately doesn't run it at all (L3 NAT + relay instead — see `ROADMAP.md` "Settled
-     decisions"), and that's an intentional, working design choice, not a gap. The open question
-     here is one layer below batman-adv: whether 802.11 association between the XIAO's STA and a
-     Pi's HaLow radio is even possible under the current OpenMANET release's supported topology.
+0. **No current OpenMANET role/wizard exposes a HaLow radio in plain AP mode. Confirmed 2026-08-16**
+   on a real Pi set up as a mesh gate — zero AP-mode option anywhere in the guided setup for a
+   XIAO-class STA-only device to associate to. This is a real gap in the ecosystem, not a local
+   misconfiguration, and it's the reason `gwcfg-scan` finds nothing no matter what SSID/key/channel
+   is entered. **This is not a batman-adv problem** — batman-adv runs a layer above 802.11
+   association, the XIAO deliberately doesn't run it (L3 NAT + relay instead — see `ROADMAP.md`
+   "Settled decisions"), and that's an intentional, working choice, not a gap. The break is one
+   layer below batman-adv: nothing on the Pi currently beacons an infrastructure AP on the HaLow
+   band for the XIAO's STA to find.
+
+   **Working theory for a fix, not yet proven on hardware** — from reading OpenMANET's docs and
+   source (`github.com/OpenMANET/openmanetd`, fetched 2026-08-16):
+   - The docs' exact wording is *"Bridge mode and the HaLow AP wizard were removed in this
+     release. The mesh gate always NATs the mesh into whatever upstream you plug into `eth0`."*
+     That's scoped to the **mesh gate role's own guided wizard** specifically (gate = router/NAT to
+     an upstream WAN via `eth0`, the opposite direction from what the XIAO needs) — it does not by
+     itself prove the underlying radio-mode capability is gone everywhere.
+   - `openmanet.wifi_config.v1`'s schema (see "Confirmed" above) has no separate code path for
+     S1G/HaLow — `WifiBand` includes `S1G` as just another value alongside `2G`/`5G`/`6G`, and
+     `RadioSettings.mode` is one generic `WifiMode` field regardless of band.
+   - Reading `openmanetd`'s actual source backs that up: `internal/network/uci_wireless.go` — the
+     code that turns a radio's settings into real UCI wireless config (`option mode 'ap'`, etc.) —
+     treats `Mode` as a plain passthrough field with **no S1G-specific branch, restriction, or
+     rejection** anywhere in it. Nothing found in `internal/network/` or `internal/mgmt/` special-
+     cases HaLow band radios to forbid AP mode; the restriction (if it's enforced at all beyond the
+     UI) would have to live in a handler this pass didn't reach.
+   - **Conclusion to test**: the gap may be in the *guided setup wizard's* UX only, not in
+     `openmanetd`'s config pipeline itself. Try setting the HaLow radio's `mode` to `AP` (band
+     `S1G`, encryption `SAE`/`OWE`, a real SSID, a channel/bandwidth inside 902–928 MHz) through
+     `openmanetd`'s **general radio/Wireless settings** (not the mesh-gate wizard) — the web UI's
+     own docs describe a "Wireless tab" with "HaLow + 2.4/5 GHz radio settings" as a real, separate
+     panel — or by calling `wifi_config.v1.WifiConfigService/UpdateRadioSettings` directly against
+     `openmanetd`'s API (port 8087, gRPC + HTTP/JSON per its README). If `hostapd_s1g` actually
+     comes up in AP mode, `gwcfg-scan` should immediately see it — that single test result (works /
+     silently reverts / rejected with an error) is the next thing to gather, and it tells us which
+     of three very different problems this actually is.
+   - **Tradeoff if it works**: a Pi typically has exactly **one** Morse Micro HaLow radio (the
+     WM6108 HAT) — see the correction above about WM1302 being unrelated LoRa silicon — so
+     dedicating it to AP mode pulls it out of the 802.11s backbone entirely (one radio, one
+     `WifiMode`, confirmed above). That's a non-issue for today's single-Pi + single-XIAO scope;
+     it becomes exactly item 4 below once a second Pi needs to mesh with this one.
+   - **If it doesn't work** — hostapd_s1g rejects AP mode, or openmanetd silently reverts it, or a
+     handler this pass didn't find actually does forbid it — then this genuinely has no workaround
+     within the current ecosystem, and the right move is raising it with OpenMANET directly: there
+     are currently **zero open GitHub issues on `OpenMANET/openmanetd`** mentioning HaLow/AP mode,
+     so this would be a first report, not a known/tracked limitation. The ask would be a supported
+     way to run a HaLow radio as a leaf-facing AP for STA-only client devices (this project isn't
+     the only thing that would want that) — either restoring wizard support for it, or documenting
+     the manual API path as supported rather than incidental.
 
 Check with `uci show wireless`, `iw dev`, `iw list`, `batctl if` on the Pi.
 
