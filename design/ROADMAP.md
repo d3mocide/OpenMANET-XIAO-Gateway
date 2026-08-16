@@ -270,6 +270,52 @@ is the real fallback, and starts with a conversation with Morse Micro about gap 
 in this repo. Gap 2 needs a considered scoping pass of its own before any code gets written, even if
 Morse Micro says yes to gap 1.
 
+### 8. Fallback if both item 0 and item 7 are dead ends — buildable today, entirely within this repo
+
+Raised 2026-08-16. Assumes the worst case: the Pi genuinely has no HaLow AP mode (item 0 fails) and
+Morse Micro won't add mesh support (item 7 is closed). Both remaining options route around HaLow
+entirely for the Pi-facing hop, using only things already confirmed to exist: `esp-halow`'s real
+`CONFIG_HALOW_AP_MODE` support (see item 7), the ESP32-S3's own native 2.4 GHz Wi-Fi (fully separate
+radio from the HaLow module — no channel/mode conflict with it), and OpenMANET's already-documented,
+always-on local AP (`br-ahwlan`, bridged into `bat0`, that every mesh point exposes with its own
+DHCP — confirmed in `openmanet.github.io/docs/networking`). **Neither tier needs a single change on
+the Pi or from Morse Micro.**
+
+**Tier 1 — cheapest, ships fastest, but gives up HaLow's range.** Add a second uplink option to this
+firmware: instead of `uplink_halow.c` joining a Pi HaLow AP, use the ESP32-S3's native `esp_wifi` in
+STA mode to join the Pi's existing local 2.4/5 GHz AP directly. `ip_forward_nat.c` and `cot_relay.c`
+already operate generically on "the uplink netif" vs. "the SoftAP netif" — neither cares which radio
+backs the uplink — so this is mostly a new `uplink_wifi.c` mirroring `uplink_halow.c`'s state
+machine against `esp_wifi` STA APIs instead of `mmhalow_*`, plus `WIFI_MODE_APSTA` (concurrent local
+AP + uplink STA on the *same* onboard radio — standard, well-worn ESP-IDF territory, unlike
+anything HaLow-specific). Worth doing even as a **validation step regardless of items 0/7's
+outcome**: it's the only way to test this repo's NAT/DNS/CoT-relay pipeline against a real
+OpenMANET mesh today, since nothing past `gwcfg-scan` has run against real hardware yet (see the
+build-order checklist). The honest downside: at that point the XIAO is just short-range 2.4 GHz
+Wi-Fi to the Pi, the same range a phone joining the Pi's own AP directly would get — it keeps the
+SoftAP/NAT/CoT-relay value but loses the actual reason this project exists.
+
+**Tier 2 — preserves the actual point of the project.** Give this firmware a second **role**: a
+HaLow-to-mesh bridge node, co-located near the Pi, that runs the HaLow radio in **AP mode**
+(`CONFIG_HALOW_AP_MODE`, fanning out to remote leaf XIAOs — each of *those* keeps today's firmware
+completely unchanged, just pointed at the bridge's SSID instead of a Pi's) and joins the Pi's local
+2.4/5 GHz AP as its own uplink STA (Tier 1's mechanism), NAT/relaying between the two exactly like
+today's gateway does between SoftAP and HaLow-STA — just with the radios' roles inverted and 2.4 GHz
+swapped in for the last hop. A field-deployed leaf XIAO gets HaLow's actual long range to reach the
+bridge; only the bridge-to-Pi hop is short-range Wi-Fi, and that hop only has to cover "near the
+Pi," which is what the Pi's local AP is already for. One bridge can serve multiple leaf XIAOs (HaLow
+AP mode is multi-client like any AP). Needs real new code — `CONFIG_HALOW_AP_MODE`'s own Kconfig
+help text warns it "increases the flash and ram requirements by a non inconsequential amount" (check
+against the current 44% free margin), and while ESP32-S3+MM6108 is in `esp-halow`'s tested-hardware
+table, its README doesn't break testing out by mode, so AP mode specifically on this exact
+board/chip pairing isn't yet proven the way STA mode already is on real hardware — budget bring-up
+time for it like any other untested path in this project.
+
+Both tiers keep every known HaLow constraint from `PI_SIDE.md`: security must be `open`/`owe`/`sae`
+(no PSK), region is fixed `US`, and phones behind any leaf XIAO stay NAT'd (`172.16.50.x`, not
+`10.41.x.x`) exactly as today — L2 bridging is still off the table on ESP32/lwIP regardless of which
+radio carries the uplink.
+
 ## Settled decisions
 
 Recorded so they aren't relitigated, and so they aren't accidentally undone.
