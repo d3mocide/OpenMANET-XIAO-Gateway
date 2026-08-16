@@ -148,6 +148,32 @@ Kconfig value, not something set here or in the web UI.)
 
 Reboot after saving (either transport) for uplink/SoftAP changes to take effect.
 
+### Node roles: client and relay
+
+One firmware image, one config field (`gwcfg-set-role client|relay`, or the web UI's Node → Role):
+
+- **client** (the default, and everything described above) - local SoftAP for phones/ATAK devices,
+  HaLow STA uplink to a Pi's (or a relay's) HaLow AP.
+- **relay** - for when the Pi itself can't run a HaLow AP at all (see `design/PI_SIDE.md` item 0).
+  A relay joins the Pi's own local Wi-Fi directly as an ordinary client, and offers its own HaLow
+  radio as an AP that other, unmodified client-role XIAOs associate to instead of a Pi - so
+  field-deployed leaf nodes still get HaLow's actual range, with only the relay-to-Pi hop riding
+  short-range Wi-Fi. See `design/ROADMAP.md` item 8 for the full design and its current status:
+  **built and `idf.py build`-verified, not yet proven on real hardware** - Morse Micro's own HaLow
+  AP-mode API is marked alpha.
+
+```
+xiao-gw> gwcfg-set-role relay
+xiao-gw> gwcfg-set-wifi-uplink <pi-local-ssid> <psk|->
+xiao-gw> gwcfg-list-halow-channels
+xiao-gw> gwcfg-set-halow-ap <ssid> <psk|-> <open|sae> <op_class> <s1g_chan_num>
+xiao-gw> gwcfg-save
+```
+
+A leaf pointed at a relay (rather than a real Pi) needs one extra step, since the relay's HaLow AP
+runs no DHCP server: `gwcfg-set-uplink-static-ip <ip> <gateway> <netmask>` on the leaf, using an
+address in the relay's HaLow AP subnet.
+
 ## Diagnosing a node
 
 The bring-up instruments, in the order you'd reach for them - full procedure in
@@ -161,6 +187,10 @@ The bring-up instruments, in the order you'd reach for them - full procedure in
 | Slow blink (1 Hz) | Radio up, not associated |
 | Double-blink | Associated, but no DHCP lease |
 | Solid | Uplink up |
+
+(On a relay-role node the LED reflects the *Wi-Fi* uplink to the Pi, not the HaLow AP - there's no
+"radio never initialized" case for the native Wi-Fi radio, so the fast triple-blink pattern is
+never used there.)
 
 **The web UI's status panel** reports the same link state in words, plus uplink RSSI, both
 interfaces' IPs, SoftAP client count, whether the CoT relay started, uptime, free heap and the
@@ -185,11 +215,13 @@ in the ROM bootloader instead.
 main/
 ├── app_main.c          entrypoint: wires everything below together
 ├── board.h              XIAO pin assignments (status LED, BOOT button) + HaLow pin collisions
-├── gw_config.h          shared config structs (uplink/softap/CoT/node)
+├── gw_config.h          shared config structs (role/uplink/softap/wifi_uplink/halow_ap/CoT/node)
 ├── provisioning.c       NVS-backed config load/save + gwcfg-* console commands
-├── uplink_halow.c       HaLow STA uplink via morsemicro/halow, reconnect/backoff, scan, RSSI
-├── downlink_softap.c    local 2.4GHz SoftAP + DHCP for phones/tablets/ATAK devices
-├── ip_forward_nat.c     DNS propagation + uplink as default route + NAPT on the SoftAP netif
+├── uplink_halow.c       HaLow STA uplink via morsemicro/halow, reconnect/backoff, scan, RSSI (client role)
+├── downlink_softap.c    local 2.4GHz SoftAP + DHCP for phones/tablets/ATAK devices (client role)
+├── uplink_wifi.c        native 2.4GHz esp_wifi STA uplink to the Pi's local AP (relay role)
+├── downlink_halow_ap.c  HaLow radio in AP mode for other XIAOs to join (relay role) - untested on hardware
+├── ip_forward_nat.c     DNS propagation + uplink as default route + NAPT on the downlink netif
 ├── cot_relay.c          ATAK CoT multicast relay (239.2.3.1:6969) between both netifs
 ├── status_led.c         on-board LED as a link-state indicator (no cable, no phone needed)
 ├── factory_reset.c      BOOT-button hold restores default config

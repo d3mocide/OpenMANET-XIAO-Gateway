@@ -19,8 +19,10 @@ FGH100M-H — 902–928 MHz, US only.** One build, `CONFIG_HALOW_COUNTRY_CODE="U
 decisions" and [`HARDWARE.md`](HARDWARE.md) "Regulatory domain".
 
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
-component: **zero errors, zero warnings**, binary ~1.67 MB, **44% free** in the 3 MB app
-slot on confirmed 8 MB flash. Verified by actually running the build, not by reading code.
+component: **zero errors, zero warnings**, binary ~1.89 MB, **37% free** in the 3 MB app
+slot on confirmed 8 MB flash (down from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the
+GW_ROLE_RELAY code below - see item 8). Verified by actually running the build, not by reading
+code.
 
 **First hardware bring-up is under way.** Steps 1 and 4 have passed on a real XIAO ESP32-S3 +
 WM6108: the MM6108 answers over SPI with its version banner, and the SoftAP leases addresses and
@@ -56,16 +58,18 @@ not by re-reading this repo. Assume the same class of error exists elsewhere. Se
 
 | Module | File | Status |
 |---|---|---|
-| Local SoftAP + DHCP | `main/downlink_softap.c` | 2.4 GHz AP + DHCP server for phones/tablets/ATAK devices. |
-| HaLow STA uplink | `main/uplink_halow.c` | STA association, reconnect/backoff, bounded DHCP wait with disconnect-and-retry. Exposes a four-state link state, RSSI, a blocking scan wrapper, and radio version readback. |
+| Local SoftAP + DHCP | `main/downlink_softap.c` | 2.4 GHz AP + DHCP server for phones/tablets/ATAK devices. GW_ROLE_CLIENT only. |
+| HaLow STA uplink | `main/uplink_halow.c` | STA association, reconnect/backoff, bounded DHCP wait with disconnect-and-retry. Exposes a four-state link state, RSSI, a blocking scan wrapper, and radio version readback. GW_ROLE_CLIENT only. |
+| Wi-Fi STA uplink | `main/uplink_wifi.c` | GW_ROLE_RELAY only - native `esp_wifi` STA joining the Pi's own local AP directly (item 8 below). Same link-state/RSSI/callback shape as `uplink_halow.c`, event-driven reconnect against standard ESP-IDF STA events rather than a blocking task. |
+| HaLow AP downlink | `main/downlink_halow_ap.c` | GW_ROLE_RELAY only - HaLow radio in AP mode (`CONFIG_HALOW_AP_MODE`) so other XIAOs can associate to this node instead of a Pi (item 8 below). Static IP, no DHCP server - see the file's own header comment for why. Also exposes the regulatory channel table so an operator can pick a legal (op_class, s1g_chan_num) pair. **Untested on real hardware** - Morse's own AP-mode API is marked alpha. |
 | NAT / IP forwarding | `main/ip_forward_nat.c` | All three steps of ESP-IDF's NAT recipe: DNS propagation into the SoftAP's DHCP offers, uplink as default route, NAPT on the downlink. |
 | CoT multicast relay | `main/cot_relay.c` | One socket joined to 239.2.3.1:6969 on both netifs, `IP_PKTINFO`/`recvmsg()` for arrival interface, loop prevention via `IP_MULTICAST_LOOP` off + own-source drop. |
-| Provisioning | `main/provisioning.c` | NVS config blob (magic + version stamped, validated on load and save) plus `gwcfg-*` console commands over USB Serial/JTAG. |
+| Provisioning | `main/provisioning.c` | NVS config blob (magic + version stamped, validated on load and save) plus `gwcfg-*` console commands over USB Serial/JTAG. `gwcfg-set-role` selects GW_ROLE_CLIENT/GW_ROLE_RELAY at runtime - one firmware image, no separate relay build. |
 | Web config UI | `main/web_ui.c` / `.html` | `esp_http_server` + embedded HTML. `GET /api/status`, `GET`/`POST /api/config`, `GET /api/log`, `POST /api/scan`, `POST /api/reboot`. Same NVS config as the console. SoftAP clients only; **no authentication yet**. |
 | Status LED | `main/status_led.c` | On-board GPIO21 LED blinks the uplink link state. The only instrument needing neither cable nor phone. |
 | Factory reset | `main/factory_reset.c` | 5 s BOOT-button hold restores defaults and reboots; LED acknowledges at 1.5 s. |
 | Log ring buffer | `main/log_buffer.c` | `esp_log_set_vprintf` tee into a 6 KB RAM ring, served at `/api/log`. Chains to the previous handler, so serial output is unaffected. |
-| App wiring | `main/app_main.c` | Brings up log buffer, LED, factory-reset watcher, SoftAP, console and web UI immediately; NAT + CoT relay once the uplink holds a DHCP lease, retrying on the next reconnect if that fails. Skips the reconnect task entirely if the radio never initialized. |
+| App wiring | `main/app_main.c` | Brings up log buffer, LED, factory-reset watcher, console and web UI immediately; then one of two role-specific bring-up paths (`bring_up_client_role()` / `bring_up_relay_role()`). NAT + CoT relay come up via a shared helper once whichever uplink holds a usable IP, retrying on the next reconnect if that fails. |
 | Web flasher + CI | `docs/`, `.github/workflows/` | ESP Web Tools page, single US build. GitHub Actions builds `sdkconfig.defaults` unmodified and deploys to Pages; PRs build but don't deploy. |
 
 Everything above compiles clean. **Steps 1 and 4 have now passed on hardware** (see the checklist);
@@ -270,49 +274,55 @@ is the real fallback, and starts with a conversation with Morse Micro about gap 
 in this repo. Gap 2 needs a considered scoping pass of its own before any code gets written, even if
 Morse Micro says yes to gap 1.
 
-### 8. Fallback if both item 0 and item 7 are dead ends — buildable today, entirely within this repo
+### 8. GW_ROLE_RELAY — built 2026-08-16, `idf.py build` verified, **untested on real hardware**
 
-Raised 2026-08-16. Assumes the worst case: the Pi genuinely has no HaLow AP mode (item 0 fails) and
-Morse Micro won't add mesh support (item 7 is closed). Both remaining options route around HaLow
-entirely for the Pi-facing hop, using only things already confirmed to exist: `esp-halow`'s real
-`CONFIG_HALOW_AP_MODE` support (see item 7), the ESP32-S3's own native 2.4 GHz Wi-Fi (fully separate
-radio from the HaLow module — no channel/mode conflict with it), and OpenMANET's already-documented,
-always-on local AP (`br-ahwlan`, bridged into `bat0`, that every mesh point exposes with its own
-DHCP — confirmed in `openmanet.github.io/docs/networking`). **Neither tier needs a single change on
-the Pi or from Morse Micro.**
+Fallback for the worst case on both item 0 (Pi has no HaLow AP mode) and item 7 (Morse Micro won't
+add mesh support): route around HaLow entirely for the Pi-facing hop, using only things already
+confirmed to exist - `esp-halow`'s real `CONFIG_HALOW_AP_MODE` support (see item 7), the ESP32-S3's
+own native 2.4 GHz Wi-Fi (fully separate radio from the HaLow module), and OpenMANET's
+already-documented, always-on local AP (`br-ahwlan`, bridged into `bat0`) that every mesh point
+exposes with its own DHCP. **Needs zero changes on the Pi or from Morse Micro.**
 
-**Tier 1 — cheapest, ships fastest, but gives up HaLow's range.** Add a second uplink option to this
-firmware: instead of `uplink_halow.c` joining a Pi HaLow AP, use the ESP32-S3's native `esp_wifi` in
-STA mode to join the Pi's existing local 2.4/5 GHz AP directly. `ip_forward_nat.c` and `cot_relay.c`
-already operate generically on "the uplink netif" vs. "the SoftAP netif" — neither cares which radio
-backs the uplink — so this is mostly a new `uplink_wifi.c` mirroring `uplink_halow.c`'s state
-machine against `esp_wifi` STA APIs instead of `mmhalow_*`, plus `WIFI_MODE_APSTA` (concurrent local
-AP + uplink STA on the *same* onboard radio — standard, well-worn ESP-IDF territory, unlike
-anything HaLow-specific). Worth doing even as a **validation step regardless of items 0/7's
-outcome**: it's the only way to test this repo's NAT/DNS/CoT-relay pipeline against a real
-OpenMANET mesh today, since nothing past `gwcfg-scan` has run against real hardware yet (see the
-build-order checklist). The honest downside: at that point the XIAO is just short-range 2.4 GHz
-Wi-Fi to the Pi, the same range a phone joining the Pi's own AP directly would get — it keeps the
-SoftAP/NAT/CoT-relay value but loses the actual reason this project exists.
+Landed as a second node **role**, selectable at runtime (`gwcfg-set-role client|relay`, or the web
+UI's Node → Role field) - one firmware image serves both, not a separate build:
 
-**Tier 2 — preserves the actual point of the project.** Give this firmware a second **role**: a
-HaLow-to-mesh bridge node, co-located near the Pi, that runs the HaLow radio in **AP mode**
-(`CONFIG_HALOW_AP_MODE`, fanning out to remote leaf XIAOs — each of *those* keeps today's firmware
-completely unchanged, just pointed at the bridge's SSID instead of a Pi's) and joins the Pi's local
-2.4/5 GHz AP as its own uplink STA (Tier 1's mechanism), NAT/relaying between the two exactly like
-today's gateway does between SoftAP and HaLow-STA — just with the radios' roles inverted and 2.4 GHz
-swapped in for the last hop. A field-deployed leaf XIAO gets HaLow's actual long range to reach the
-bridge; only the bridge-to-Pi hop is short-range Wi-Fi, and that hop only has to cover "near the
-Pi," which is what the Pi's local AP is already for. One bridge can serve multiple leaf XIAOs (HaLow
-AP mode is multi-client like any AP). Needs real new code — `CONFIG_HALOW_AP_MODE`'s own Kconfig
-help text warns it "increases the flash and ram requirements by a non inconsequential amount" (check
-against the current 44% free margin), and while ESP32-S3+MM6108 is in `esp-halow`'s tested-hardware
-table, its README doesn't break testing out by mode, so AP mode specifically on this exact
-board/chip pairing isn't yet proven the way STA mode already is on real hardware — budget bring-up
-time for it like any other untested path in this project.
+- **GW_ROLE_CLIENT** is unchanged - today's original design, still the default.
+- **GW_ROLE_RELAY** is new: `main/uplink_wifi.c` (native `esp_wifi` STA joining the Pi's local AP,
+  event-driven reconnect against standard ESP-IDF STA events - the validation step this project
+  needed anyway, since nothing past `gwcfg-scan` had run against a real OpenMANET mesh) plus
+  `main/downlink_halow_ap.c` (HaLow radio in AP mode via `mmhalow_set_config(WIFI_IF_AP, ...)` +
+  `mmhalow_wifi_start()`, static IP rather than DHCP - see that file's header comment for why
+  `esp_netif`'s DHCP server can't be attached to the netif `mmhalow_init()` creates). A
+  GW_ROLE_CLIENT leaf needs zero firmware changes to associate to a relay instead of a Pi - it's the
+  same `uplink_halow.c`, just pointed at the relay's SSID, with an optional static-IP override
+  (`gwcfg-set-uplink-static-ip`) since the relay's HaLow AP doesn't hand out leases. One relay can
+  serve multiple leaf XIAOs (HaLow AP mode is multi-client like any AP), and a field-deployed leaf
+  keeps HaLow's actual long range to reach the relay - only the relay-to-Pi hop is short-range Wi-Fi,
+  which only has to cover "near the Pi."
 
-Both tiers keep every known HaLow constraint from `PI_SIDE.md`: security must be `open`/`owe`/`sae`
-(no PSK), region is fixed `US`, and phones behind any leaf XIAO stay NAT'd (`172.16.50.x`, not
+`gwcfg-set-wifi-uplink` and `gwcfg-set-halow-ap` (plus `gwcfg-list-halow-channels`, since
+`mmwlan_ap_args` wants an (op_class, s1g_chan_num) pair with no obvious mapping to a frequency an
+operator actually has) configure the two relay-only radios; `gwcfg-status`, `/api/config` and
+`/api/status` all became role-aware. `GW_CONFIG_VERSION` bumped to 4 for the new fields - reprovision
+after updating, per the usual policy.
+
+**Confirmed by build, not yet by hardware**: `idf.py build` passes clean against ESP-IDF v5.5.1 with
+`CONFIG_HALOW_AP_MODE=y` now always on (binary grew from ~1.67 MB/44% free to ~1.89 MB/37% free -
+built into every image since role is a runtime choice, not a build-time one). What building does
+*not* prove: Morse Micro's own header marks `mmwlan_ap_args`/`mmwlan_ap_enable()` "ALPHA NOTICE:
+under development; breaking changes may be introduced," and while ESP32-S3+MM6108 is in
+`esp-halow`'s tested-hardware table, its README doesn't break testing out by mode - AP mode
+specifically on this exact chip pairing isn't proven on real hardware the way STA mode already is.
+Budget bring-up time for GW_ROLE_RELAY like any other untested path in this project (see
+`design/HARDWARE.md`'s runbook pattern) before trusting it in the field. First things to check on
+real hardware, in order: does `mmhalow_wifi_start()` actually bring the AP up on air (it returns
+`void`, so `downlink_halow_ap_is_started()` only means "we called it," not confirmation); does a
+leaf XIAO's `gwcfg-scan` find it; does association complete; does the static-IP-on-both-ends scheme
+actually pass traffic once associated.
+
+Both the client and relay roles keep every known HaLow constraint from `PI_SIDE.md`: security must
+be `open`/`owe`/`sae` (no PSK), region is fixed `US`, and phones behind any leaf XIAO stay NAT'd
+(`172.16.50.x`, not
 `10.41.x.x`) exactly as today — L2 bridging is still off the table on ESP32/lwIP regardless of which
 radio carries the uplink.
 

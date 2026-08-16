@@ -14,10 +14,29 @@ CONFIG_LWIP_IPV4_NAPT=y
 # can be forwarded out the other one without risking a loop.
 CONFIG_LWIP_NETBUF_RECVINFO=y
 
-# SoftAP + STA concurrently: the native 2.4GHz radio runs AP-only in this
-# design (downlink_softap), while HaLow uplink runs on the separate SPI
-# radio (uplink_halow), so plain AP mode is sufficient here.
+# The native 2.4GHz radio runs in exactly one mode per node, never both:
+# GW_ROLE_CLIENT (default) uses it AP-only for the local SoftAP
+# (downlink_softap.c), while HaLow carries that role's uplink on the separate
+# SPI radio (uplink_halow.c). GW_ROLE_RELAY instead uses the native radio
+# STA-only, as its own uplink to the Pi's local AP (uplink_wifi.c), while
+# HaLow runs AP mode as that role's downlink (see CONFIG_HALOW_AP_MODE
+# below) - see design/ROADMAP.md item 8. Neither role needs concurrent
+# AP+STA on the native radio, so plain SoftAP support is sufficient here.
 CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+
+# Real HaLow AP-mode support (genuine wpa_supplicant/hostapd code, not a
+# stub - confirmed by reading esp-halow's own
+# halow/components/hostap/CMakeLists.txt), needed by downlink_halow_ap.c for
+# GW_ROLE_RELAY. Off by default in the component's own Kconfig because it
+# "increas[es] the flash and ram requirements by a non inconsequential
+# amount" (halow/Kconfig) - built into every image here anyway, since role is
+# a runtime choice (gwcfg-set-role) and both roles share one firmware binary;
+# a GW_ROLE_CLIENT node simply never calls the AP-mode code this pulls in.
+# Marked "ALPHA NOTICE" in the SDK's own mmwlan.h and untested by this
+# project on real S3+MM6108 hardware - see design/ROADMAP.md item 8 and
+# design/PI_SIDE.md "GW_ROLE_RELAY" before trusting it blind on a deployed
+# node.
+CONFIG_HALOW_AP_MODE=y
 
 # esp_console is used by provisioning.c for the runtime config CLI. The XIAO
 # ESP32-S3's USB-C port is wired to the chip's native USB Serial/JTAG

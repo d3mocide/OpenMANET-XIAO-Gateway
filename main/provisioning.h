@@ -52,6 +52,11 @@ esp_err_t provisioning_save(const gw_config_t *cfg);
 gw_security_mode_t provisioning_parse_security(const char *s);
 const char *provisioning_security_name(gw_security_mode_t sec);
 
+/* Same pattern, for gw_node_role_t - shared by the console (gwcfg-set-role)
+ * and the web UI. */
+gw_node_role_t provisioning_parse_role(const char *s);
+const char *provisioning_role_name(gw_node_role_t role);
+
 /* Registers `gwcfg-*` esp_console commands that read/mutate *cfg in place
  * and can persist it via provisioning_save(). cfg must outlive the console. */
 esp_err_t provisioning_register_console_commands(gw_config_t *cfg);
