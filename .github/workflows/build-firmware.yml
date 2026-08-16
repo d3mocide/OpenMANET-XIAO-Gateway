@@ -124,17 +124,18 @@ jobs:
           # Root manifest default
           cp "${BUILD_DIR}/manifest.json" site/manifest.json
 
+          export BUILD_ID VERSION SHORT_SHA FULL_SHA COMMIT_DATE COMMIT_TITLE IS_RELEASE
           python3 -c "
-          import json
+          import json, os
           data = {
-              'id': '${BUILD_ID}',
-              'version': '${VERSION}',
-              'sha': '${SHORT_SHA}',
-              'fullSha': '${FULL_SHA}',
-              'date': '${COMMIT_DATE}',
-              'title': '''${COMMIT_TITLE}''',
-              'isRelease': ${IS_RELEASE},
-              'manifest': 'builds/${BUILD_ID}/manifest.json'
+              'id': os.environ['BUILD_ID'],
+              'version': os.environ['VERSION'],
+              'sha': os.environ['SHORT_SHA'],
+              'fullSha': os.environ['FULL_SHA'],
+              'date': os.environ['COMMIT_DATE'],
+              'title': os.environ['COMMIT_TITLE'],
+              'isRelease': os.environ['IS_RELEASE'].lower() == 'true',
+              'manifest': f'builds/{os.environ[\"BUILD_ID\"]}/manifest.json'
           }
           with open('site/current-build.json', 'w') as f:
               json.dump(data, f, indent=2)
