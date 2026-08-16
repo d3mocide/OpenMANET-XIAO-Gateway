@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp_wifi_default.h"
 
 static const char *TAG = "uplink_wifi";
 
@@ -111,16 +112,29 @@ esp_err_t uplink_wifi_init(const gw_wifi_uplink_config_t *cfg)
     memcpy(&s_cfg, cfg, sizeof(s_cfg));
     s_configured = gw_wifi_uplink_is_configured(&s_cfg);
 
-    /* Owns esp_wifi's global init + mode entirely, unlike downlink_softap.c -
-     * a GW_ROLE_RELAY node never runs downlink_softap_init(), so there is no
-     * second caller of esp_wifi_init()/esp_wifi_set_mode() to conflict with.
-     * Plain STA mode, not APSTA: a relay has no local phone-facing SoftAP of
-     * its own (see gw_config.h's GW_ROLE_RELAY comment), so there is nothing
-     * on this radio for an AP role to share, and no channel-locking concern
-     * that WIFI_MODE_APSTA would otherwise raise. */
-    s_netif = esp_netif_create_default_wifi_sta();
+    /* Morse Micro's mmhalow_init() (in downlink_halow_ap.c / uplink_halow.c)
+     * unconditionally creates its netif using ESP_NETIF_DEFAULT_WIFI_STA(),
+     * which claims if_key "WIFI_STA_DEF". In GW_ROLE_RELAY, both the HaLow
+     * radio (downlink AP) and the native Wi-Fi radio (uplink STA) are active.
+     * Calling esp_netif_create_default_wifi_sta() here would attempt to
+     * register "WIFI_STA_DEF" a second time and trigger a duplicate-key panic
+     * in esp_netif_new_api().
+     *
+     * We use esp_netif_create_wifi() with a custom if_key ("WIFI_STA_NATIVE")
+     * and attach default station handlers explicitly, which is identical in
+     * function to esp_netif_create_default_wifi_sta() without key collision. */
+    esp_netif_inherent_config_t sta_netif_cfg = ESP_NETIF_INHERENT_DEFAULT_WIFI_STA();
+    sta_netif_cfg.if_key = "WIFI_STA_NATIVE";
+    sta_netif_cfg.if_desc = "sta_native";
+    sta_netif_cfg.route_prio = 128;
+    s_netif = esp_netif_create_wifi(WIFI_IF_STA, &sta_netif_cfg);
     if (s_netif == NULL) {
+        ESP_LOGE(TAG, "failed to create native Wi-Fi STA netif");
         return ESP_FAIL;
+    }
+    esp_err_t h_err = esp_wifi_set_default_wifi_sta_handlers();
+    if (h_err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_set_default_wifi_sta_handlers: %s", esp_err_to_name(h_err));
     }
 
     wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
