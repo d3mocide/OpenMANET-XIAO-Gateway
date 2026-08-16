@@ -475,7 +475,7 @@
     if (!build) return;
     vcardSha.textContent = build.version || build.sha || 'latest';
     vcardDate.textContent = build.displayDate || (build.date ? new Date(build.date).toLocaleString() : 'Automated CI build');
-    vcardMsg.textContent = build.title || build.message || 'Main branch build';
+    vcardMsg.textContent = build.title || build.message || (build.isRelease ? 'Official Tagged Release' : 'Main branch development build');
 
     if (build.sha && build.sha !== 'latest') {
       vcardCommitLink.href = `${repoBaseUrl}/commit/${build.fullSha || build.sha}`;
@@ -485,12 +485,19 @@
       vcardCommitLink.textContent = 'Repository \u2192';
     }
 
-    if (build.isLatest) {
-      versionStatusBadge.className = 'badge badge-latest';
-      versionStatusBadge.textContent = 'Latest Build';
+    if (build.isRelease) {
+      if (build.isLatest) {
+        versionStatusBadge.className = 'badge badge-latest';
+        versionStatusBadge.textContent = 'Latest Release';
+      } else {
+        versionStatusBadge.className = 'badge badge-history';
+        versionStatusBadge.textContent = build.tag || 'Past Release';
+      }
     } else {
       versionStatusBadge.className = 'badge badge-history';
-      versionStatusBadge.textContent = build.tag || 'Historical Build';
+      versionStatusBadge.style.color = 'var(--color-warn)';
+      versionStatusBadge.style.borderColor = 'var(--color-warn)';
+      versionStatusBadge.textContent = 'Dev Build (main)';
     }
 
     const manifestUrl = build.manifest || 'manifest.json';
@@ -502,22 +509,49 @@
       const res = await fetch('builds.json', { cache: 'no-store' });
       if (!res.ok) throw new Error('builds.json not found');
       const data = await res.json();
-      if (data && Array.isArray(data.builds) && data.builds.length > 0) {
-        availableBuilds = data.builds;
+      if (data) {
+        const releases = Array.isArray(data.releases) ? data.releases : [];
+        const devBuilds = Array.isArray(data.devBuilds) ? data.devBuilds : [];
+        availableBuilds = data.builds || [...releases, ...devBuilds];
+
         versionSelect.innerHTML = '';
-        availableBuilds.forEach((b, idx) => {
-          const opt = document.createElement('option');
-          opt.value = b.manifest || (b.sha ? `builds/${b.sha}/manifest.json` : 'manifest.json');
-          const tagLabel = b.tag ? `[${b.tag}] ` : (idx === 0 ? '[Latest] ' : `[n-${idx}] `);
-          const verLabel = b.version || (b.sha ? b.sha.substring(0, 7) : 'Build');
-          const dateLabel = b.displayDate ? ` (${b.displayDate})` : (b.date ? ` (${b.date.substring(0, 10)})` : '');
-          opt.textContent = `${tagLabel}${verLabel}${dateLabel}`;
-          versionSelect.appendChild(opt);
-        });
-        updateCard(availableBuilds[0]);
+
+        if (releases.length > 0) {
+          const relGroup = document.createElement('optgroup');
+          relGroup.label = 'Tagged Releases (Recommended)';
+          releases.forEach((b, idx) => {
+            const opt = document.createElement('option');
+            opt.value = b.manifest;
+            const tag = b.tag || (idx === 0 ? 'Latest Release' : `Previous (n-${idx})`);
+            const dateStr = b.date ? ` · ${b.date.substring(0, 10)}` : '';
+            opt.textContent = `[${tag}] ${b.version}${dateStr}`;
+            relGroup.appendChild(opt);
+          });
+          versionSelect.appendChild(relGroup);
+        }
+
+        if (devBuilds.length > 0) {
+          const devGroup = document.createElement('optgroup');
+          devGroup.label = 'Development Builds (Bleeding Edge)';
+          devBuilds.forEach((b) => {
+            const opt = document.createElement('option');
+            opt.value = b.manifest;
+            const dateStr = b.date ? ` · ${b.date.substring(0, 10)}` : '';
+            opt.textContent = `[Dev Build] ${b.version}${dateStr}`;
+            devGroup.appendChild(opt);
+          });
+          versionSelect.appendChild(devGroup);
+        }
+
+        // Default to latest release if available, otherwise first build
+        const defaultBuild = releases.length > 0 ? releases[0] : (availableBuilds[0] || null);
+        if (defaultBuild) {
+          versionSelect.value = defaultBuild.manifest;
+          updateCard(defaultBuild);
+        }
       }
     } catch (e) {
-      // Fallback if builds.json is unavailable (e.g. running from file:// or single manifest)
+      // Fallback if builds.json is unavailable
       versionSelect.innerHTML = '<option value="manifest.json">Default Build (manifest.json)</option>';
       fetch('manifest.json')
         .then(r => r.json())
@@ -537,7 +571,7 @@
 
   versionSelect.addEventListener('change', function() {
     const selectedManifest = this.value;
-    const found = availableBuilds.find(b => (b.manifest === selectedManifest) || (`builds/${b.sha}/manifest.json` === selectedManifest));
+    const found = availableBuilds.find(b => b.manifest === selectedManifest);
     if (found) {
       updateCard(found);
     } else {

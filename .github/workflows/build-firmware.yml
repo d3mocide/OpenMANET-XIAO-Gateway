@@ -3,6 +3,7 @@ name: Build firmware and deploy web flasher
 on:
   push:
     branches: [main]
+    tags: ['v*']
   # Build on PRs too. Without this a branch can be broken all the way to merge
   # and the first sign of it is a failed deploy on main - which is also the
   # moment the web flasher stops getting new firmware. PRs build but never
@@ -60,24 +61,11 @@ jobs:
           cp build/ota_data_initial.bin site/
           cp build/xiao_halow_gateway.bin site/
 
-          # The offsets below MUST match partitions.csv. They are not the
-          # defaults: this is a dual-OTA layout, so the app lives at 0x20000
-          # (131072) rather than the 0x10000 a single-app table would use, and
-          # otadata at 0x10000 (65536) gets the generated ota_data_initial.bin
-          # so a freshly flashed board boots ota_0 instead of chasing stale
-          # OTA state left in flash. Getting these wrong yields a flash that
-          # reports success and then doesn't boot, so assert them against the
-          # build's own flash_args rather than trusting this heredoc.
           BOOTLOADER_OFFSET=0
           PARTITION_TABLE_OFFSET=32768
           OTADATA_OFFSET=65536
           APP_OFFSET=131072
 
-          # Match offset AND filename together on the same flash_args line.
-          # Checking the offset alone is not enough: with the app at the old
-          # 0x10000 that check still passes, because otadata now occupies
-          # 0x10000 - i.e. it would wave through the exact regression this
-          # guard exists to catch.
           check_part() {
             offset="$(printf '0x%x' "$1")"
             file="$2"
@@ -92,21 +80,32 @@ jobs:
           check_part "$OTADATA_OFFSET" ota_data_initial.bin
           check_part "$APP_OFFSET" xiao_halow_gateway.bin
 
-          VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
           SHORT_SHA="$(git rev-parse --short HEAD)"
           FULL_SHA="$(git rev-parse HEAD)"
           COMMIT_DATE="$(git log -1 --format=%cI)"
           COMMIT_TITLE="$(git log -1 --format=%s)"
 
-          # Create directory for this specific build
-          BUILD_DIR="site/builds/${SHORT_SHA}"
+          # Check if this is a tag release
+          REF_NAME="${{ github.ref_name }}"
+          REF_TYPE="${{ github.ref_type }}"
+
+          if [ "${REF_TYPE}" = "tag" ] || echo "${REF_NAME}" | grep -qE '^v[0-9]'; then
+            IS_RELEASE="true"
+            VERSION="${REF_NAME}"
+            BUILD_ID="${REF_NAME}"
+          else
+            IS_RELEASE="false"
+            VERSION="dev-${SHORT_SHA}"
+            BUILD_ID="dev-${SHORT_SHA}"
+          fi
+
+          BUILD_DIR="site/builds/${BUILD_ID}"
           mkdir -p "${BUILD_DIR}"
           cp site/bootloader.bin site/partition-table.bin site/ota_data_initial.bin site/xiao_halow_gateway.bin "${BUILD_DIR}/"
 
-          # Manifest in build folder (relative paths resolve within builds/<sha>/)
           cat > "${BUILD_DIR}/manifest.json" <<EOF
           {
-            "name": "XIAO HaLow Gateway (US) [${SHORT_SHA}]",
+            "name": "XIAO HaLow Gateway (US) [${VERSION}]",
             "version": "${VERSION}",
             "builds": [
               {
@@ -122,20 +121,20 @@ jobs:
           }
           EOF
 
-          # Root manifest for backwards compatibility
+          # Root manifest default
           cp "${BUILD_DIR}/manifest.json" site/manifest.json
 
-          # Current build metadata
           python3 -c "
           import json
           data = {
-              'id': '${SHORT_SHA}',
+              'id': '${BUILD_ID}',
               'version': '${VERSION}',
               'sha': '${SHORT_SHA}',
               'fullSha': '${FULL_SHA}',
               'date': '${COMMIT_DATE}',
               'title': '''${COMMIT_TITLE}''',
-              'manifest': 'builds/${SHORT_SHA}/manifest.json'
+              'isRelease': ${IS_RELEASE},
+              'manifest': 'builds/${BUILD_ID}/manifest.json'
           }
           with open('site/current-build.json', 'w') as f:
               json.dump(data, f, indent=2)
@@ -147,8 +146,6 @@ jobs:
           name: firmware
           path: site
 
-  # Publishing steps only. A PR build stops after `build` above: it proves the
-  # firmware compiles without touching the live flasher page.
   assemble:
     needs: build
     if: github.event_name != 'pull_request'
@@ -172,7 +169,7 @@ jobs:
           restore-keys: |
             firmware-build-history-
 
-      - name: Merge build history and generate builds.json
+      - name: Merge build history (Releases vs Dev)
         run: |
           python3 - <<'EOF'
           import json, os, shutil
@@ -180,64 +177,81 @@ jobs:
           with open('site/current-build.json', 'r') as f:
               current = json.load(f)
 
-          current_sha = current['sha']
-
-          prev_builds = []
           history_file = 'build_history/builds.json'
+          hist = {'releases': [], 'devBuilds': []}
           if os.path.exists(history_file):
               try:
                   with open(history_file, 'r') as f:
-                      hist = json.load(f)
-                      prev_builds = hist.get('builds', [])
+                      loaded = json.load(f)
+                      hist['releases'] = loaded.get('releases', [])
+                      hist['devBuilds'] = loaded.get('devBuilds', [])
               except Exception as e:
-                  print(f"Warning: could not read history: {e}")
+                  print(f"Warning reading history: {e}")
 
-          # Deduplicate against current build
-          filtered_prev = [b for b in prev_builds if b.get('sha') != current_sha]
+          # Update appropriate channel
+          if current.get('isRelease'):
+              # Filter out existing with same ID or version
+              hist['releases'] = [r for r in hist['releases'] if r.get('id') != current['id']]
+              hist['releases'] = [current] + hist['releases'][:3] # keep up to 4 releases
+          else:
+              hist['devBuilds'] = [d for d in hist['devBuilds'] if d.get('id') != current['id']]
+              hist['devBuilds'] = [current] + hist['devBuilds'][:1] # keep latest dev build
 
-          # Keep current + up to 3 previous builds = 4 builds total
-          selected_builds = [current] + filtered_prev[:3]
+          # Tag releases
+          for idx, r in enumerate(hist['releases']):
+              r['tag'] = 'Latest Release' if idx == 0 else f'Previous Release (n-{idx})'
+              r['isLatest'] = (idx == 0)
 
-          for idx, b in enumerate(selected_builds):
-              b['isLatest'] = (idx == 0)
-              if idx == 0:
-                  b['tag'] = 'Latest'
-              else:
-                  b['tag'] = f"Previous (n-{idx})"
+          for d in hist['devBuilds']:
+              d['tag'] = 'Dev Build (main)'
+              d['isLatest'] = False
 
-          # Copy cached previous builds to site/builds/
+          # Reconstruct flattened builds list with releases first (recommended)
+          combined_builds = hist['releases'] + hist['devBuilds']
+
+          # Default selection: latest release if available, else latest dev
+          default_id = hist['releases'][0]['id'] if hist['releases'] else (hist['devBuilds'][0]['id'] if hist['devBuilds'] else current['id'])
+
+          # Copy cached builds from build_history/builds into site/builds/
           os.makedirs('site/builds', exist_ok=True)
-          for b in selected_builds[1:]:
-              sha = b.get('sha')
-              src = os.path.join('build_history', 'builds', sha)
-              dst = os.path.join('site', 'builds', sha)
+          valid_ids = {b['id'] for b in combined_builds}
+          for b_id in valid_ids:
+              src = os.path.join('build_history', 'builds', b_id)
+              dst = os.path.join('site', 'builds', b_id)
               if os.path.isdir(src) and not os.path.exists(dst):
                   shutil.copytree(src, dst)
 
-          # Write site builds.json
+          # Copy default manifest to root manifest.json
+          default_manifest_src = os.path.join('site', 'builds', default_id, 'manifest.json')
+          if os.path.exists(default_manifest_src):
+              shutil.copyfile(default_manifest_src, 'site/manifest.json')
+
           index_data = {
-              'latest': current_sha,
-              'builds': selected_builds
+              'latestRelease': hist['releases'][0]['version'] if hist['releases'] else None,
+              'defaultId': default_id,
+              'releases': hist['releases'],
+              'devBuilds': hist['devBuilds'],
+              'builds': combined_builds
           }
+
           with open('site/builds.json', 'w') as f:
               json.dump(index_data, f, indent=2)
 
-          # Update build_history for caching
+          # Update build_history cache
           os.makedirs('build_history/builds', exist_ok=True)
           with open('build_history/builds.json', 'w') as f:
               json.dump(index_data, f, indent=2)
 
-          current_build_dir = os.path.join('site', 'builds', current_sha)
-          hist_current_dir = os.path.join('build_history', 'builds', current_sha)
+          current_build_dir = os.path.join('site', 'builds', current['id'])
+          hist_current_dir = os.path.join('build_history', 'builds', current['id'])
           if os.path.isdir(current_build_dir):
               if os.path.exists(hist_current_dir):
                   shutil.rmtree(hist_current_dir)
               shutil.copytree(current_build_dir, hist_current_dir)
 
           # Prune expired builds from build_history
-          valid_shas = {b.get('sha') for b in selected_builds}
           for item in os.listdir('build_history/builds'):
-              if item not in valid_shas:
+              if item not in valid_ids:
                   p = os.path.join('build_history', 'builds', item)
                   if os.path.isdir(p):
                       shutil.rmtree(p)
