@@ -9,6 +9,7 @@
 #include "esp_system.h"
 
 #include "cot_relay.h"
+#include "downlink_halow_ap.h"
 #include "downlink_softap.h"
 #include "factory_reset.h"
 #include "gw_config.h"
@@ -17,6 +18,7 @@
 #include "provisioning.h"
 #include "status_led.h"
 #include "uplink_halow.h"
+#include "uplink_wifi.h"
 #include "web_ui.h"
 
 static const char *TAG = "app_main";
@@ -103,7 +105,10 @@ static void log_boot_diagnostics(void)
 static gw_config_t s_cfg;
 static bool s_datapath_up = false;
 
-/* Brings up NAT + the CoT relay the first time the HaLow uplink gets an IP.
+/* Brings up NAT + the CoT relay the first time the uplink (whichever kind -
+ * HaLow STA for GW_ROLE_CLIENT, native Wi-Fi STA for GW_ROLE_RELAY) gets an
+ * IP. Shared by both roles' state callbacks below so the NAT-direction and
+ * error-handling logic exists exactly once.
  *
  * Known v1 limitation: if a later reconnect gets a *different* IP, NAT/CoT
  * relay aren't re-initialized against it - see design/ROADMAP.md for the
@@ -111,33 +116,28 @@ static bool s_datapath_up = false;
  *
  * The "did this already" flag is set only once both pieces actually succeeded.
  * Setting it on entry (as this used to) meant a single transient failure - the
- * SoftAP netif momentarily without an address, say - permanently disabled the
- * datapath until someone power-cycled the node, because no later reconnect
- * would ever try again. */
-static void on_uplink_state(bool connected, void *ctx)
+ * downlink netif momentarily without an address, say - permanently disabled
+ * the datapath until someone power-cycled the node, because no later
+ * reconnect would ever try again. */
+static void bring_up_datapath(esp_netif_t *downlink_netif, esp_netif_t *uplink_netif,
+                               const gw_cot_config_t *cot)
 {
-    gw_config_t *cfg = (gw_config_t *)ctx;
-
-    if (!connected || s_datapath_up) {
+    if (s_datapath_up) {
         return;
     }
 
-    esp_netif_t *uplink_netif = uplink_halow_get_netif();
-    esp_netif_t *softap_netif = downlink_softap_get_netif();
-
-    /* NAPT goes on the SoftAP side, default route on the uplink, and the
-     * uplink's DNS server is copied into the SoftAP's DHCP offers - see
-     * ip_forward_nat.h for why that direction is not the intuitive one. */
-    esp_err_t nat_err = ip_forward_nat_init(softap_netif, uplink_netif);
+    /* NAPT goes on the downlink side, default route on the uplink, and the
+     * uplink's DNS server is copied into the downlink's DHCP offers - see
+     * ip_forward_nat.h for why that direction is not the intuitive one. For
+     * GW_ROLE_RELAY the "downlink" is the HaLow AP rather than the SoftAP,
+     * but the same reasoning applies - it's still the side leaf clients sit
+     * behind. */
+    esp_err_t nat_err = ip_forward_nat_init(downlink_netif, uplink_netif);
     if (nat_err != ESP_OK) {
         ESP_LOGE(TAG, "NAT init failed: %s", esp_err_to_name(nat_err));
     }
 
-    provisioning_config_lock();
-    gw_cot_config_t cot = cfg->cot;
-    provisioning_config_unlock();
-
-    esp_err_t cot_err = cot_relay_start(uplink_netif, softap_netif, &cot);
+    esp_err_t cot_err = cot_relay_start(uplink_netif, downlink_netif, cot);
     if (cot_err == ESP_ERR_INVALID_STATE) {
         cot_err = ESP_OK; /* already running from an earlier attempt */
     } else if (cot_err != ESP_OK) {
@@ -151,60 +151,51 @@ static void on_uplink_state(bool connected, void *ctx)
     }
 }
 
-void app_main(void)
+/* GW_ROLE_CLIENT: HaLow STA uplink, local SoftAP downlink. */
+static void on_halow_uplink_state(bool connected, void *ctx)
 {
-    /* First, so the ring captures boot logs too - the ones that say whether
-     * the radio came up are the ones you most want to read back later. */
-    esp_err_t err = log_buffer_init();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "log buffer init failed: %s", esp_err_to_name(err));
+    gw_config_t *cfg = (gw_config_t *)ctx;
+    if (!connected) {
+        return;
     }
+    provisioning_config_lock();
+    gw_cot_config_t cot = cfg->cot;
+    provisioning_config_unlock();
+    bring_up_datapath(downlink_softap_get_netif(), uplink_halow_get_netif(), &cot);
+}
 
-    /* Immediately after the ring exists, so "why did we restart?" is the first
-     * thing anyone reads back over /api/log - and so it survives being asked
-     * from a phone with no serial cable in sight. */
-    log_boot_diagnostics();
-
-    ESP_ERROR_CHECK(provisioning_init());
-    provisioning_load(&s_cfg);
-
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    /* Started before the radio: until uplink_halow_init() runs, the link state
-     * reads as RADIO_FAILED, so the LED shows "not up yet" from the first
-     * moment there's power rather than staying dark through bring-up. */
-    err = status_led_start();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "status LED start failed: %s", esp_err_to_name(err));
+/* GW_ROLE_RELAY: native Wi-Fi STA uplink (to the Pi's local AP), HaLow AP
+ * downlink (to leaf XIAOs). */
+static void on_wifi_uplink_state(bool connected, void *ctx)
+{
+    gw_config_t *cfg = (gw_config_t *)ctx;
+    if (!connected) {
+        return;
     }
+    provisioning_config_lock();
+    gw_cot_config_t cot = cfg->cot;
+    provisioning_config_unlock();
+    bring_up_datapath(downlink_halow_ap_get_netif(), uplink_wifi_get_netif(), &cot);
+}
 
-    /* The config-recovery escape hatch. Started early and independently of
-     * everything below so it still works when the SoftAP or the radio doesn't
-     * - which is exactly when it's needed. */
-    err = factory_reset_start(&s_cfg);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "factory reset watcher failed to start: %s", esp_err_to_name(err));
-    }
-
+/* Today's original design: local 2.4GHz SoftAP for phones/ATAK devices,
+ * HaLow STA uplink to whatever AP is configured. Unchanged behaviour from
+ * before GW_ROLE existed - only pulled into its own function so app_main()
+ * can pick between this and bring_up_relay_role(). */
+static void bring_up_client_role(gw_config_t *cfg)
+{
     /* SoftAP first: it doesn't depend on the uplink and should be usable
      * standalone - it's the natural first hardware test. */
-    err = downlink_softap_init(&s_cfg.softap);
+    esp_err_t err = downlink_softap_init(&cfg->softap);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "SoftAP bring-up failed: %s", esp_err_to_name(err));
     }
 
-    provisioning_register_console_commands(&s_cfg);
-    err = provisioning_start_console();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "console start failed: %s", esp_err_to_name(err));
-    }
-
     /* Same config, second transport: reachable at the SoftAP's IP once
-     * connected to it. The SoftAP netif is passed so the
-     * server can refuse requests arriving from the mesh over the uplink -
-     * these endpoints are unauthenticated. */
-    err = web_ui_start(&s_cfg, downlink_softap_get_netif());
+     * connected to it. The SoftAP netif is passed so the server can refuse
+     * requests arriving from the mesh over the uplink - these endpoints are
+     * unauthenticated. */
+    err = web_ui_start(cfg, downlink_softap_get_netif());
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "web UI start failed: %s", esp_err_to_name(err));
     }
@@ -213,7 +204,7 @@ void app_main(void)
      * consistent snapshot rather than letting the radio read a half-updated
      * struct. */
     provisioning_config_lock();
-    gw_uplink_config_t uplink_cfg = s_cfg.uplink;
+    gw_uplink_config_t uplink_cfg = cfg->uplink;
     provisioning_config_unlock();
 
     err = uplink_halow_init(&uplink_cfg);
@@ -237,14 +228,115 @@ void app_main(void)
          * pattern, so this is visible rather than silent. */
         ESP_LOGW(TAG, "no HaLow uplink configured yet - join '%s' and open http://%s/ to scan "
                       "for your gateway's AP, then save and reboot",
-                 s_cfg.softap.ssid, s_cfg.softap.use_custom_subnet ? s_cfg.softap.ip : "192.168.4.1");
+                 cfg->softap.ssid, cfg->softap.use_custom_subnet ? cfg->softap.ip : "192.168.4.1");
     } else {
-        uplink_halow_set_state_callback(on_uplink_state, &s_cfg);
+        uplink_halow_set_state_callback(on_halow_uplink_state, cfg);
         err = uplink_halow_start();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "failed to start HaLow reconnect task: %s", esp_err_to_name(err));
         }
     }
+}
 
-    ESP_LOGI(TAG, "xiao-halow-gateway up: node_id=%s", s_cfg.node_id);
+/* GW_ROLE_RELAY: HaLow AP downlink (so client-role XIAOs have something to
+ * associate to - design/PI_SIDE.md item 0), native Wi-Fi STA uplink to the
+ * Pi's own local AP. See design/ROADMAP.md item 8 for the full reasoning,
+ * including why this hop uses static IPs instead of DHCP. */
+static void bring_up_relay_role(gw_config_t *cfg)
+{
+    /* HaLow AP first, same "usable standalone" reasoning as the SoftAP in
+     * the client role - a relay with no uplink yet should still be joinable
+     * by leaf XIAOs for bench testing between them. */
+    esp_err_t err = downlink_halow_ap_init(&cfg->halow_ap);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HaLow AP bring-up failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "the radio is unavailable - check the CONFIG_MM_* pin/BCF config against "
+                      "the board (design/HARDWARE.md)");
+    }
+
+    /* Reachable from a leaf XIAO already associated to this relay's HaLow AP
+     * (or a laptop bench-testing that link directly) - same subnet-restricted
+     * trust model the client role uses, just against the HaLow AP netif
+     * instead of the SoftAP one, since a relay runs no SoftAP of its own. */
+    err = web_ui_start(cfg, downlink_halow_ap_get_netif());
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "web UI start failed: %s", esp_err_to_name(err));
+    }
+
+    provisioning_config_lock();
+    gw_wifi_uplink_config_t wifi_cfg = cfg->wifi_uplink;
+    provisioning_config_unlock();
+
+    err = uplink_wifi_init(&wifi_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi uplink init failed: %s", esp_err_to_name(err));
+    } else if (!gw_wifi_uplink_is_configured(&wifi_cfg)) {
+        ESP_LOGW(TAG, "no Wi-Fi uplink configured yet - associate to this relay's HaLow AP and "
+                      "open http://%s/ to set the Pi's local AP as the uplink, then save and reboot",
+                 cfg->halow_ap.ip);
+    } else {
+        uplink_wifi_set_state_callback(on_wifi_uplink_state, cfg);
+        err = uplink_wifi_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "failed to start Wi-Fi uplink: %s", esp_err_to_name(err));
+        }
+    }
+}
+
+void app_main(void)
+{
+    /* First, so the ring captures boot logs too - the ones that say whether
+     * the radio came up are the ones you most want to read back later. */
+    esp_err_t err = log_buffer_init();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "log buffer init failed: %s", esp_err_to_name(err));
+    }
+
+    /* Immediately after the ring exists, so "why did we restart?" is the first
+     * thing anyone reads back over /api/log - and so it survives being asked
+     * from a phone with no serial cable in sight. */
+    log_boot_diagnostics();
+
+    ESP_ERROR_CHECK(provisioning_init());
+    provisioning_load(&s_cfg);
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* Started before the radio: until uplink_halow_init()/uplink_wifi_init()
+     * runs, the link state reads as "not up yet", so the LED shows that from
+     * the first moment there's power rather than staying dark through
+     * bring-up. */
+    err = status_led_start(s_cfg.role);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "status LED start failed: %s", esp_err_to_name(err));
+    }
+
+    /* The config-recovery escape hatch. Started early and independently of
+     * everything below so it still works when the SoftAP/HaLow AP or the
+     * radio doesn't - which is exactly when it's needed. */
+    err = factory_reset_start(&s_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "factory reset watcher failed to start: %s", esp_err_to_name(err));
+    }
+
+    provisioning_register_console_commands(&s_cfg);
+    err = provisioning_start_console();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "console start failed: %s", esp_err_to_name(err));
+    }
+
+    /* Console is up regardless of role by this point - gwcfg-* always works
+     * over USB, which matters most for GW_ROLE_RELAY: it has no SoftAP, so
+     * before its Wi-Fi uplink and HaLow AP are both configured the console
+     * (or a temporary direct HaLow association to reach the web UI) is the
+     * only way in. */
+    if (s_cfg.role == GW_ROLE_RELAY) {
+        bring_up_relay_role(&s_cfg);
+    } else {
+        bring_up_client_role(&s_cfg);
+    }
+
+    ESP_LOGI(TAG, "xiao-halow-gateway up: node_id=%s role=%s", s_cfg.node_id,
+             s_cfg.role == GW_ROLE_RELAY ? "relay" : "client");
 }

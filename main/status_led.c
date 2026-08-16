@@ -9,8 +9,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "uplink_halow.h"
+#include "uplink_wifi.h"
 
 static const char *TAG = "status_led";
+
+static gw_node_role_t s_role = GW_ROLE_CLIENT;
 
 /* One tick per pattern slot. 125ms gives a slow blink of 1Hz over an 8-slot
  * pattern while still being fast enough for a triple-blink to read as one. */
@@ -38,6 +41,28 @@ static const uint8_t s_patterns[] = {
 /* Steady fast blink, distinct from every link-state pattern above. */
 #define ATTENTION_PATTERN 0b01010101
 
+/* GW_ROLE_RELAY has no HaLow-radio-init failure mode in the same sense as
+ * GW_ROLE_CLIENT's uplink_halow (the native 2.4GHz radio doesn't have a
+ * discrete SPI-bring-up step that can fail the way an external radio can -
+ * see uplink_wifi.h), so this only ever maps into the DOWN/ASSOCIATING/
+ * ASSOCIATED/UP/UNCONFIGURED slots of s_patterns[], never RADIO_FAILED.
+ * Reflects uplink_wifi's state - the relay's link back to the Pi - rather
+ * than the HaLow AP's own state, on the same reasoning the client role's LED
+ * has always used: whether this node can actually reach the mesh is the
+ * single most operationally important signal, more so than whether a leaf is
+ * currently associated to it. */
+static uplink_link_state_t relay_led_state(void)
+{
+    switch (uplink_wifi_get_link_state()) {
+    case WIFI_UPLINK_UNCONFIGURED: return UPLINK_LINK_UNCONFIGURED;
+    case WIFI_UPLINK_DOWN:         return UPLINK_LINK_DOWN;
+    case WIFI_UPLINK_CONNECTING:   return UPLINK_LINK_ASSOCIATING;
+    case WIFI_UPLINK_ASSOCIATED:   return UPLINK_LINK_ASSOCIATED;
+    case WIFI_UPLINK_UP:           return UPLINK_LINK_UP;
+    default:                       return UPLINK_LINK_DOWN;
+    }
+}
+
 static void led_write(bool on)
 {
 #if BOARD_STATUS_LED_ACTIVE_LOW
@@ -57,7 +82,8 @@ static void status_led_task(void *arg)
         if (s_attention) {
             pattern = ATTENTION_PATTERN;
         } else {
-            uplink_link_state_t state = uplink_halow_get_link_state();
+            uplink_link_state_t state =
+                (s_role == GW_ROLE_RELAY) ? relay_led_state() : uplink_halow_get_link_state();
             pattern = ((size_t)state < sizeof(s_patterns) / sizeof(s_patterns[0]))
                           ? s_patterns[state]
                           : s_patterns[UPLINK_LINK_DOWN];
@@ -69,8 +95,10 @@ static void status_led_task(void *arg)
     }
 }
 
-esp_err_t status_led_start(void)
+esp_err_t status_led_start(gw_node_role_t role)
 {
+    s_role = role;
+
     gpio_config_t io = {
         .pin_bit_mask = 1ULL << BOARD_STATUS_LED_GPIO,
         .mode = GPIO_MODE_OUTPUT,

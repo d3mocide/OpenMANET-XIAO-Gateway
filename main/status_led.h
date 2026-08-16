@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "esp_err.h"
+#include "gw_config.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,8 +24,10 @@ extern "C" {
  *   double-blink                   associated, waiting for a DHCP lease
  *   solid on                       uplink up - associated and leased
  *
- * The pattern is derived from uplink_halow_get_link_state(), so it stays
- * correct without anything having to remember to update it.
+ * The pattern is derived from uplink_halow_get_link_state() (GW_ROLE_CLIENT)
+ * or uplink_wifi_get_link_state() (GW_ROLE_RELAY - the relay's link back to
+ * the Pi, not its HaLow AP's own state), so it stays correct without
+ * anything having to remember to update it.
  *
  * One reading trap, learned the hard way on real hardware: a node stuck in a
  * *reboot loop* also shows a repeating triple-blink, because it dies during
@@ -34,7 +37,7 @@ extern "C" {
  * again means the device restarted. app_main logs the reset reason at boot
  * precisely so that guess doesn't have to be made from the LED.
  */
-esp_err_t status_led_start(void);
+esp_err_t status_led_start(gw_node_role_t role);
 
 /* Overrides the link-state pattern with a solid-on/steady-fast-blink
  * acknowledgement, used by the factory-reset hold so the operator gets

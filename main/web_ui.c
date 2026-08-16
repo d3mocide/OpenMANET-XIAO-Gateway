@@ -6,9 +6,11 @@
 #include "web_ui.h"
 
 #include "cot_relay.h"
+#include "downlink_halow_ap.h"
 #include "log_buffer.h"
 #include "provisioning.h"
 #include "uplink_halow.h"
+#include "uplink_wifi.h"
 
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -212,16 +214,33 @@ static esp_err_t config_get_handler(httpd_req_t *req)
 
     provisioning_config_lock();
     cJSON_AddStringToObject(root, "node_id", s_cfg->node_id);
+    cJSON_AddStringToObject(root, "role", provisioning_role_name(s_cfg->role));
 
     cJSON *uplink = cJSON_AddObjectToObject(root, "uplink");
     cJSON_AddStringToObject(uplink, "ssid", s_cfg->uplink.ssid);
     cJSON_AddStringToObject(uplink, "security", provisioning_security_name(s_cfg->uplink.security));
     /* Passphrases are deliberately never echoed back - see web_ui.html's
      * "leave blank to keep current" fields and copy_json_str() below. */
+    cJSON_AddBoolToObject(uplink, "use_static_ip", s_cfg->uplink.use_static_ip);
+    cJSON_AddStringToObject(uplink, "static_ip", s_cfg->uplink.static_ip);
+    cJSON_AddStringToObject(uplink, "static_gateway", s_cfg->uplink.static_gateway);
+    cJSON_AddStringToObject(uplink, "static_netmask", s_cfg->uplink.static_netmask);
 
     cJSON *softap = cJSON_AddObjectToObject(root, "softap");
     cJSON_AddStringToObject(softap, "ssid", s_cfg->softap.ssid);
     cJSON_AddNumberToObject(softap, "channel", s_cfg->softap.channel);
+
+    cJSON *wifi_uplink = cJSON_AddObjectToObject(root, "wifi_uplink");
+    cJSON_AddStringToObject(wifi_uplink, "ssid", s_cfg->wifi_uplink.ssid);
+
+    cJSON *halow_ap = cJSON_AddObjectToObject(root, "halow_ap");
+    cJSON_AddStringToObject(halow_ap, "ssid", s_cfg->halow_ap.ssid);
+    cJSON_AddStringToObject(halow_ap, "security", provisioning_security_name(s_cfg->halow_ap.security));
+    cJSON_AddNumberToObject(halow_ap, "op_class", s_cfg->halow_ap.op_class);
+    cJSON_AddNumberToObject(halow_ap, "s1g_chan_num", s_cfg->halow_ap.s1g_chan_num);
+    cJSON_AddNumberToObject(halow_ap, "max_stas", s_cfg->halow_ap.max_stas);
+    cJSON_AddStringToObject(halow_ap, "ip", s_cfg->halow_ap.ip);
+    cJSON_AddStringToObject(halow_ap, "netmask", s_cfg->halow_ap.netmask);
 
     cJSON *cot = cJSON_AddObjectToObject(root, "cot");
     cJSON_AddStringToObject(cot, "group", s_cfg->cot.group);
@@ -275,6 +294,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 
     provisioning_config_lock();
     cJSON_AddStringToObject(root, "node_id", s_cfg->node_id);
+    gw_node_role_t role = s_cfg->role;
+    cJSON_AddStringToObject(root, "role", provisioning_role_name(role));
     cJSON *cot = cJSON_AddObjectToObject(root, "cot");
     cJSON_AddStringToObject(cot, "group", s_cfg->cot.group);
     cJSON_AddNumberToObject(cot, "port", s_cfg->cot.port);
@@ -319,6 +340,34 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     wifi_sta_list_t sta_list;
     cJSON_AddNumberToObject(softap, "clients",
                             esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK ? sta_list.num : -1);
+
+    /* GW_ROLE_RELAY's status - reported unconditionally, same reasoning as
+     * the rest of this endpoint always including every section: the getters
+     * below are safe to call regardless of active role (uplink_wifi_init()/
+     * downlink_halow_ap_init() simply never ran on a GW_ROLE_CLIENT node, so
+     * they report their own "not configured"/not-ready idle state rather
+     * than anything misleading), and it's simpler for the page to always
+     * receive both shapes and render whichever the "role" field says is
+     * live. */
+    cJSON *wifi_uplink = cJSON_AddObjectToObject(root, "wifi_uplink");
+    uplink_wifi_link_state_t wifi_state = uplink_wifi_get_link_state();
+    cJSON_AddStringToObject(wifi_uplink, "state", uplink_wifi_link_state_name(wifi_state));
+    cJSON_AddBoolToObject(wifi_uplink, "connected", uplink_wifi_is_connected());
+    int8_t wifi_rssi = uplink_wifi_get_rssi();
+    if (wifi_rssi == INT8_MIN) {
+        cJSON_AddNullToObject(wifi_uplink, "rssi");
+    } else {
+        cJSON_AddNumberToObject(wifi_uplink, "rssi", wifi_rssi);
+    }
+    add_netif_ip(wifi_uplink, "ip", uplink_wifi_get_netif());
+
+    cJSON *halow_ap = cJSON_AddObjectToObject(root, "halow_ap");
+    cJSON_AddBoolToObject(halow_ap, "ready", downlink_halow_ap_is_ready());
+    /* Best-effort only - mmhalow_wifi_start() returns void, so this reflects
+     * "we called it", not confirmation the AP is actually on air. See
+     * downlink_halow_ap.h. */
+    cJSON_AddBoolToObject(halow_ap, "started", downlink_halow_ap_is_started());
+    add_netif_ip(halow_ap, "ip", downlink_halow_ap_get_netif());
 
     cJSON *sys = cJSON_AddObjectToObject(root, "system");
     cJSON_AddNumberToObject(sys, "uptime_s", (double)(esp_timer_get_time() / 1000000));
@@ -397,8 +446,9 @@ static esp_err_t config_post_handler(httpd_req_t *req)
      * cJSON.c with no override; cJSON.c v1.7.x checks the limit only *after*
      * recursing). 1000 frames is far more than this task's stack, so a ~1 KB
      * body of "[[[[..." would panic before the limit is ever reached. A valid
-     * config body contains 4 objects and no arrays, so cap total containers
-     * long before recursion depth can matter. */
+     * config body contains at most 6 objects (uplink, softap, wifi_uplink,
+     * halow_ap, cot, plus root) and no arrays, so cap total containers well
+     * below that before recursion depth can matter. */
     int container_budget = 16;
     for (const char *p = buf; *p != '\0'; p++) {
         if ((*p == '{' || *p == '[') && --container_budget < 0) {
@@ -424,6 +474,11 @@ static esp_err_t config_post_handler(httpd_req_t *req)
 
     copy_json_str(root, "node_id", work.node_id, sizeof(work.node_id), &too_long);
 
+    const cJSON *role = cJSON_GetObjectItemCaseSensitive(root, "role");
+    if (cJSON_IsString(role) && role->valuestring != NULL) {
+        work.role = provisioning_parse_role(role->valuestring);
+    }
+
     const cJSON *uplink = cJSON_GetObjectItemCaseSensitive(root, "uplink");
     if (!too_long && cJSON_IsObject(uplink)) {
         copy_json_str(uplink, "ssid", work.uplink.ssid, sizeof(work.uplink.ssid), &too_long);
@@ -433,6 +488,21 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         const cJSON *sec = cJSON_GetObjectItemCaseSensitive(uplink, "security");
         if (cJSON_IsString(sec) && sec->valuestring != NULL) {
             work.uplink.security = provisioning_parse_security(sec->valuestring);
+        }
+        const cJSON *use_static = cJSON_GetObjectItemCaseSensitive(uplink, "use_static_ip");
+        if (cJSON_IsBool(use_static)) {
+            work.uplink.use_static_ip = cJSON_IsTrue(use_static);
+        }
+        if (!too_long) {
+            copy_json_str(uplink, "static_ip", work.uplink.static_ip, sizeof(work.uplink.static_ip), &too_long);
+        }
+        if (!too_long) {
+            copy_json_str(uplink, "static_gateway", work.uplink.static_gateway,
+                          sizeof(work.uplink.static_gateway), &too_long);
+        }
+        if (!too_long) {
+            copy_json_str(uplink, "static_netmask", work.uplink.static_netmask,
+                          sizeof(work.uplink.static_netmask), &too_long);
         }
     }
 
@@ -445,6 +515,44 @@ static esp_err_t config_post_handler(httpd_req_t *req)
         const cJSON *channel = cJSON_GetObjectItemCaseSensitive(softap, "channel");
         if (cJSON_IsNumber(channel)) {
             work.softap.channel = (uint8_t)channel->valueint;
+        }
+    }
+
+    const cJSON *wifi_uplink = cJSON_GetObjectItemCaseSensitive(root, "wifi_uplink");
+    if (!too_long && cJSON_IsObject(wifi_uplink)) {
+        copy_json_str(wifi_uplink, "ssid", work.wifi_uplink.ssid, sizeof(work.wifi_uplink.ssid), &too_long);
+        if (!too_long) {
+            copy_json_str(wifi_uplink, "psk", work.wifi_uplink.psk, sizeof(work.wifi_uplink.psk), &too_long);
+        }
+    }
+
+    const cJSON *halow_ap = cJSON_GetObjectItemCaseSensitive(root, "halow_ap");
+    if (!too_long && cJSON_IsObject(halow_ap)) {
+        copy_json_str(halow_ap, "ssid", work.halow_ap.ssid, sizeof(work.halow_ap.ssid), &too_long);
+        if (!too_long) {
+            copy_json_str(halow_ap, "psk", work.halow_ap.psk, sizeof(work.halow_ap.psk), &too_long);
+        }
+        const cJSON *ap_sec = cJSON_GetObjectItemCaseSensitive(halow_ap, "security");
+        if (cJSON_IsString(ap_sec) && ap_sec->valuestring != NULL) {
+            work.halow_ap.security = provisioning_parse_security(ap_sec->valuestring);
+        }
+        const cJSON *op_class = cJSON_GetObjectItemCaseSensitive(halow_ap, "op_class");
+        if (cJSON_IsNumber(op_class)) {
+            work.halow_ap.op_class = (int16_t)op_class->valueint;
+        }
+        const cJSON *chan_num = cJSON_GetObjectItemCaseSensitive(halow_ap, "s1g_chan_num");
+        if (cJSON_IsNumber(chan_num)) {
+            work.halow_ap.s1g_chan_num = (uint8_t)chan_num->valueint;
+        }
+        const cJSON *max_stas = cJSON_GetObjectItemCaseSensitive(halow_ap, "max_stas");
+        if (cJSON_IsNumber(max_stas)) {
+            work.halow_ap.max_stas = (uint8_t)max_stas->valueint;
+        }
+        if (!too_long) {
+            copy_json_str(halow_ap, "ip", work.halow_ap.ip, sizeof(work.halow_ap.ip), &too_long);
+        }
+        if (!too_long) {
+            copy_json_str(halow_ap, "netmask", work.halow_ap.netmask, sizeof(work.halow_ap.netmask), &too_long);
         }
     }
 

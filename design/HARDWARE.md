@@ -580,3 +580,82 @@ same job.
 Tick the checklist in [`ROADMAP.md`](ROADMAP.md) as steps pass, and move anything learned about the
 Pi into [`PI_SIDE.md`](PI_SIDE.md)'s confirmed section — those open items are what block anyone
 else from repeating this.
+
+---
+
+# Part 3 — GW_ROLE_RELAY bring-up
+
+Everything above is Part 2's runbook for the original design: one XIAO, one Pi. This part is for
+`GW_ROLE_RELAY` (`design/ROADMAP.md` item 8) — untested on real hardware as of the design landing,
+because Morse Micro's own HaLow AP-mode API is marked "ALPHA NOTICE: under development." Same
+philosophy as Part 2: cheapest, most isolated test first, so a failure narrows down instead of
+leaving three things to suspect at once.
+
+The reassuring part going in: **the recovery path from Part 2 covers a relay too.** A 5-second BOOT
+hold runs `provisioning_get_defaults()` regardless of role, which sets `role` back to
+`GW_ROLE_CLIENT` along with everything else — so the worst case testing a relay is a factory reset
+away from a node you can reach over its own SoftAP again, exactly as if it had never been touched.
+
+## Tier 0 — does the HaLow AP come up at all
+
+**Needs:** two XIAO+WM6108 units. No Pi, no third radio, no Wi-Fi network.
+
+1. Node A: `gwcfg-set-role relay`, `gwcfg-list-halow-channels`, `gwcfg-set-halow-ap <ssid> <psk|-> <open|sae> <op_class> <s1g_chan_num>`, `gwcfg-save`. Leave the Wi-Fi uplink (`gwcfg-set-wifi-uplink`) unconfigured — `downlink_halow_ap_init()` runs standalone regardless, by design, exactly so this step doesn't need one.
+2. Reboot node A. `gwcfg-status` should show `role: relay` and `halow ap: started (best-effort...)`.
+3. Node B: factory-fresh (or `gwcfg-reset`), still `GW_ROLE_CLIENT`. `gwcfg-scan`.
+
+**Pass:** node A's SSID appears in node B's scan results, with an RSSI and a frequency. **This is
+the single most valuable check in this part** — everything else assumes it. A failure here is the
+alpha AP-mode API itself, isolated from the Wi-Fi uplink, from DHCP/static-IP addressing, and from
+NAT/CoT-relay entirely.
+
+**Fail — nothing found:** same two suspects as Part 2 Step 2 (down/out of range vs. wrong channel
+for this build's regulatory domain), plus one specific to this path: `mmhalow_wifi_start()` returns
+`void` (see `main/downlink_halow_ap.h`), so `downlink_halow_ap_is_started()` only confirms the call
+was made, not that the AP actually came on air. Check the serial log around that line for anything
+the driver logged on its own.
+
+## Tier 1 — association and addressing
+
+**Needs:** the same two units, Tier 0 already passing.
+
+1. Node B: `gwcfg-set-uplink <node-A-ssid> <psk|-> <open|sae>`, then
+   `gwcfg-set-uplink-static-ip <ip> <gateway> <netmask>` — an address inside node A's HaLow AP
+   subnet (the default is `172.16.60.1/24`; pick e.g. `172.16.60.2`/`172.16.60.1`/`255.255.255.0`).
+   `gwcfg-save`, reboot.
+2. Watch node B's `gwcfg-status` / LED / web UI exactly like Part 2 Step 3 — same states
+   (`searching` → `associated, no lease` → `up`), same meaning. `associated, no lease` here doesn't
+   point at Pi-side DHCP the way it does in Part 2, though — there is no DHCP server on this AP at
+   all (see `main/downlink_halow_ap.h`'s header comment for why); a static-IP node reaching `up`
+   depends only on 802.11 association completing and the static address actually being applied.
+
+**Pass:** node B reaches `up` with the static IP you gave it. Confirm from node A's side too if
+possible (`gwcfg-status` there won't show connected clients directly, but the association should be
+visible in the log).
+
+## Tier 2 — the full chain, no Pi required
+
+**Needs:** the same two units, plus any ordinary Wi-Fi network node A can join (a home router or
+hotspot is fine — `main/uplink_wifi.c` has nothing Pi-specific in it).
+
+1. Node A: `gwcfg-set-wifi-uplink <any-ssid> <psk|->`, `gwcfg-save`, reboot.
+2. `gwcfg-status` on node A should show `wifi uplink: up` with a real IP once it joins.
+
+**Pass:** with node B also `up` (Tier 1), a phone behind node B's SoftAP should have outbound
+reachability through node A's Wi-Fi uplink — the same NAT/DNS/CoT-relay pipeline Part 2's Step 5
+exercises, just with `uplink_wifi.c` standing in for `uplink_halow.c` on node A's side. This is also
+the first time that pipeline runs against *any* real upstream on real hardware, independent of
+whether a Pi is ever involved.
+
+## Tier 3 — the actual target scenario
+
+Swap Tier 2's "any Wi-Fi network" for the Pi's own local AP. Only meaningful once
+[`PI_SIDE.md`](PI_SIDE.md) item 0's AP-mode workaround (or an equivalent) is confirmed working on
+the real Pi — otherwise this is Tier 2 again with extra steps. Everything else is identical to
+Tier 2.
+
+## Recording results (relay)
+
+Same as Part 2: tick `design/ROADMAP.md` item 8's checkboxes as tiers pass, and note anything
+learned about the alpha AP-mode API's real behavior — timing, failure modes, anything Morse Micro's
+docs don't cover — since nobody else has run this against real S3+MM6108 hardware yet either.

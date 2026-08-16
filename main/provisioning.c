@@ -6,6 +6,7 @@
 #include "provisioning.h"
 
 #include "cot_relay.h"
+#include "downlink_halow_ap.h"
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -15,6 +16,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "uplink_halow.h"
+#include "uplink_wifi.h"
 
 static const char *TAG = "provisioning";
 
@@ -57,6 +59,11 @@ void provisioning_get_defaults(gw_config_t *cfg)
 
     strlcpy(cfg->node_id, "xiao-gw-01", sizeof(cfg->node_id));
 
+    /* GW_ROLE_CLIENT: today's original design, and still what a factory-fresh
+     * node ships as - a relay is a deliberate per-node choice
+     * (gwcfg-set-role), not a default anyone should get by accident. */
+    cfg->role = GW_ROLE_CLIENT;
+
     /* No uplink by default, and deliberately no placeholder SSID.
      *
      * This used to ship "openmanet-halow", which made a factory-fresh node
@@ -68,6 +75,29 @@ void provisioning_get_defaults(gw_config_t *cfg)
     cfg->uplink.ssid[0] = '\0';
     cfg->uplink.psk[0] = '\0';
     cfg->uplink.security = GW_SECURITY_OPEN;
+    cfg->uplink.use_static_ip = false;
+    cfg->uplink.static_ip[0] = '\0';
+    cfg->uplink.static_gateway[0] = '\0';
+    cfg->uplink.static_netmask[0] = '\0';
+
+    /* GW_ROLE_RELAY fields. Also unconfigured by default, same reasoning as
+     * the HaLow uplink above - and harmless to leave populated with their
+     * defaults on a GW_ROLE_CLIENT node, since bring_up_client_role() never
+     * reads them. */
+    cfg->wifi_uplink.ssid[0] = '\0';
+    cfg->wifi_uplink.psk[0] = '\0';
+
+    cfg->halow_ap.ssid[0] = '\0';
+    cfg->halow_ap.psk[0] = '\0';
+    cfg->halow_ap.security = GW_SECURITY_SAE;
+    cfg->halow_ap.op_class = 0;
+    cfg->halow_ap.s1g_chan_num = 0;
+    cfg->halow_ap.max_stas = 0; /* => MMWLAN_DEFAULT_AP_MAX_STAS (4) */
+    /* A different /24 than the client role's SoftAP subnet (172.16.50.0/24)
+     * purely so the two are never confusable in logs/ARP tables if someone's
+     * looking at both roles side by side - see gw_config.h. */
+    strlcpy(cfg->halow_ap.ip, "172.16.60.1", sizeof(cfg->halow_ap.ip));
+    strlcpy(cfg->halow_ap.netmask, "255.255.255.0", sizeof(cfg->halow_ap.netmask));
 
     /* Local client-facing SoftAP.
      *
@@ -214,6 +244,25 @@ esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t err
         }
     }
 
+    /* Only meaningful against a GW_ROLE_RELAY's HaLow AP - see the long
+     * comment on gw_uplink_config_t.use_static_ip for why a real Pi doesn't
+     * need this. Validated whenever it's turned on, regardless of the
+     * node's current role, same reasoning as the rest of this function:
+     * one validator, shared by console/web UI/NVS load, that doesn't need
+     * to know which fields the active role actually reads. */
+    if (cfg->uplink.use_static_ip) {
+        struct in_addr tmp;
+        if (inet_aton(cfg->uplink.static_ip, &tmp) == 0) {
+            GW_REJECT("uplink static IP '%s' is not a valid address", cfg->uplink.static_ip);
+        }
+        if (inet_aton(cfg->uplink.static_gateway, &tmp) == 0) {
+            GW_REJECT("uplink static gateway '%s' is not a valid address", cfg->uplink.static_gateway);
+        }
+        if (inet_aton(cfg->uplink.static_netmask, &tmp) == 0) {
+            GW_REJECT("uplink static netmask '%s' is not a valid address", cfg->uplink.static_netmask);
+        }
+    }
+
     if (cfg->softap.ssid[0] == '\0') {
         GW_REJECT("local Wi-Fi SSID must not be empty");
     }
@@ -245,6 +294,50 @@ esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t err
         }
         if (inet_aton(cfg->softap.netmask, &tmp) == 0) {
             GW_REJECT("local Wi-Fi netmask '%s' is not a valid address", cfg->softap.netmask);
+        }
+    }
+
+    /* GW_ROLE_RELAY fields. Same "empty means not configured yet" pattern as
+     * the HaLow uplink - validated only once an operator has actually set a
+     * value, so the built-in defaults (both empty) pass validation too. */
+    if (gw_wifi_uplink_is_configured(&cfg->wifi_uplink)) {
+        size_t wifi_psk_len = strlen(cfg->wifi_uplink.psk);
+        if (wifi_psk_len > 0 && (wifi_psk_len < GW_WPA2_PSK_MIN_LEN || wifi_psk_len > GW_WPA2_PSK_MAX_LEN)) {
+            GW_REJECT("Wi-Fi uplink passphrase must be %d-%d characters (or empty for an open network)",
+                      GW_WPA2_PSK_MIN_LEN, GW_WPA2_PSK_MAX_LEN);
+        }
+    }
+
+    if (gw_halow_ap_is_configured(&cfg->halow_ap)) {
+        /* "OWE security is not currently supported for AP mode" - mmwlan.h's
+         * own mmwlan_ap_enable() docs (v2.11.2-esp32-2). Rejected here rather
+         * than silently downgraded, so a bad choice is caught at the point
+         * it's made instead of surfacing later as an AP that starts wrong. */
+        if (cfg->halow_ap.security == GW_SECURITY_OWE) {
+            GW_REJECT("HaLow AP security cannot be OWE (unsupported for AP mode) - use open or sae");
+        }
+        if (cfg->halow_ap.security == GW_SECURITY_SAE && cfg->halow_ap.psk[0] == '\0') {
+            GW_REJECT("HaLow AP security is SAE but no passphrase is set");
+        }
+        /* Zero is MMWLAN_AP_ARGS_INIT's default, meaning "never actually
+         * chosen" here - mmwlan_ap_enable() only auto-configures from 0/0
+         * when a STA is concurrently active on the same radio, which a
+         * relay's HaLow radio never is (AP mode only - see gw_config.h). An
+         * operator must pick a real channel, e.g. via a channel list command
+         * backed by downlink_halow_ap_list_channels(). */
+        if (cfg->halow_ap.op_class == 0) {
+            GW_REJECT("HaLow AP channel must be set explicitly (op_class 0 has no meaning without "
+                      "a concurrently active STA)");
+        }
+        if (cfg->halow_ap.max_stas > 20) { /* MMWLAN_AP_MAX_STAS_LIMIT, mmwlan.h */
+            GW_REJECT("HaLow AP max_stas must be 20 or fewer");
+        }
+        struct in_addr tmp;
+        if (inet_aton(cfg->halow_ap.ip, &tmp) == 0) {
+            GW_REJECT("HaLow AP IP '%s' is not a valid address", cfg->halow_ap.ip);
+        }
+        if (inet_aton(cfg->halow_ap.netmask, &tmp) == 0) {
+            GW_REJECT("HaLow AP netmask '%s' is not a valid address", cfg->halow_ap.netmask);
         }
     }
 
@@ -289,15 +382,39 @@ gw_security_mode_t provisioning_parse_security(const char *s)
     return GW_SECURITY_OPEN;
 }
 
+const char *provisioning_role_name(gw_node_role_t role)
+{
+    return role == GW_ROLE_RELAY ? "relay" : "client";
+}
+
+gw_node_role_t provisioning_parse_role(const char *s)
+{
+    return strcmp(s, "relay") == 0 ? GW_ROLE_RELAY : GW_ROLE_CLIENT;
+}
+
 static void print_config(const gw_config_t *cfg)
 {
     printf("node_id       : %s\n", cfg->node_id);
-    printf("uplink.ssid   : %s\n", cfg->uplink.ssid);
-    printf("uplink.security: %s\n", provisioning_security_name(cfg->uplink.security));
-    printf("softap.ssid   : %s\n", cfg->softap.ssid);
-    printf("softap.channel: %u\n", cfg->softap.channel);
-    printf("softap.subnet : %s\n",
-           cfg->softap.use_custom_subnet ? cfg->softap.ip : "192.168.4.1 (esp-netif default)");
+    printf("role          : %s\n", provisioning_role_name(cfg->role));
+    if (cfg->role == GW_ROLE_RELAY) {
+        printf("wifi_uplink.ssid: %s\n", cfg->wifi_uplink.ssid);
+        printf("halow_ap.ssid : %s\n", cfg->halow_ap.ssid);
+        printf("halow_ap.security: %s\n", provisioning_security_name(cfg->halow_ap.security));
+        printf("halow_ap.chan : op_class %d, s1g_chan_num %u\n", cfg->halow_ap.op_class,
+               cfg->halow_ap.s1g_chan_num);
+        printf("halow_ap.ip   : %s/%s\n", cfg->halow_ap.ip, cfg->halow_ap.netmask);
+    } else {
+        printf("uplink.ssid   : %s\n", cfg->uplink.ssid);
+        printf("uplink.security: %s\n", provisioning_security_name(cfg->uplink.security));
+        if (cfg->uplink.use_static_ip) {
+            printf("uplink.static_ip: %s/%s via %s\n", cfg->uplink.static_ip, cfg->uplink.static_netmask,
+                   cfg->uplink.static_gateway);
+        }
+        printf("softap.ssid   : %s\n", cfg->softap.ssid);
+        printf("softap.channel: %u\n", cfg->softap.channel);
+        printf("softap.subnet : %s\n",
+               cfg->softap.use_custom_subnet ? cfg->softap.ip : "192.168.4.1 (esp-netif default)");
+    }
     printf("cot           : %s:%u\n", cfg->cot.group, cfg->cot.port);
 }
 
@@ -400,6 +517,136 @@ static int cmd_gwcfg_set_softap(int argc, char **argv)
     return 0;
 }
 
+static int cmd_gwcfg_set_role(int argc, char **argv)
+{
+    if (!s_cfg || argc != 2) {
+        printf("usage: gwcfg-set-role <client|relay>\n");
+        return 1;
+    }
+
+    provisioning_config_lock();
+    gw_config_t work = *s_cfg;
+    work.role = provisioning_parse_role(argv[1]);
+
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
+    provisioning_config_unlock();
+    printf("role set to '%s' in RAM; run 'gwcfg-save' then reboot to apply - it changes which "
+           "radios/netifs come up entirely, not just a config value\n",
+           provisioning_role_name(work.role));
+    return 0;
+}
+
+/* Separate from gwcfg-set-uplink deliberately: this only matters when the
+ * uplink is a GW_ROLE_RELAY's HaLow AP rather than a real Pi (see the long
+ * comment on gw_uplink_config_t.use_static_ip), so it's an edge case worth
+ * keeping out of the common command's argument list. */
+static int cmd_gwcfg_set_uplink_static_ip(int argc, char **argv)
+{
+    if (!s_cfg || (argc != 2 && argc != 4)) {
+        printf("usage: gwcfg-set-uplink-static-ip -              (use DHCP, the default)\n"
+               "       gwcfg-set-uplink-static-ip <ip> <gateway> <netmask>\n");
+        return 1;
+    }
+
+    provisioning_config_lock();
+    gw_config_t work = *s_cfg;
+
+    if (argc == 2 && strcmp(argv[1], "-") == 0) {
+        work.uplink.use_static_ip = false;
+        work.uplink.static_ip[0] = '\0';
+        work.uplink.static_gateway[0] = '\0';
+        work.uplink.static_netmask[0] = '\0';
+    } else if (argc == 4) {
+        work.uplink.use_static_ip = true;
+        strlcpy(work.uplink.static_ip, argv[1], sizeof(work.uplink.static_ip));
+        strlcpy(work.uplink.static_gateway, argv[2], sizeof(work.uplink.static_gateway));
+        strlcpy(work.uplink.static_netmask, argv[3], sizeof(work.uplink.static_netmask));
+    } else {
+        provisioning_config_unlock();
+        printf("usage: gwcfg-set-uplink-static-ip -              (use DHCP, the default)\n"
+               "       gwcfg-set-uplink-static-ip <ip> <gateway> <netmask>\n");
+        return 1;
+    }
+
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
+    provisioning_config_unlock();
+    printf("uplink static-IP config updated in RAM; run 'gwcfg-save' then reboot to apply\n");
+    return 0;
+}
+
+static int cmd_gwcfg_set_wifi_uplink(int argc, char **argv)
+{
+    if (!s_cfg || argc != 3) {
+        printf("usage: gwcfg-set-wifi-uplink <ssid> <psk|->\n"
+               "  (GW_ROLE_RELAY only - the native 2.4GHz uplink to the Pi's local AP)\n");
+        return 1;
+    }
+
+    provisioning_config_lock();
+    gw_config_t work = *s_cfg;
+    strlcpy(work.wifi_uplink.ssid, argv[1], sizeof(work.wifi_uplink.ssid));
+    strlcpy(work.wifi_uplink.psk, strcmp(argv[2], "-") == 0 ? "" : argv[2], sizeof(work.wifi_uplink.psk));
+
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
+    provisioning_config_unlock();
+    printf("Wi-Fi uplink config updated in RAM; run 'gwcfg-save' then reboot to apply\n");
+    return 0;
+}
+
+static int cmd_gwcfg_set_halow_ap(int argc, char **argv)
+{
+    if (!s_cfg || argc != 6) {
+        printf("usage: gwcfg-set-halow-ap <ssid> <psk|-> <open|sae> <op_class> <s1g_chan_num>\n"
+               "  (GW_ROLE_RELAY only - the HaLow AP leaf XIAOs associate to)\n"
+               "  run 'gwcfg-list-halow-channels' first to see legal (op_class, s1g_chan_num) pairs\n");
+        return 1;
+    }
+
+    provisioning_config_lock();
+    gw_config_t work = *s_cfg;
+    strlcpy(work.halow_ap.ssid, argv[1], sizeof(work.halow_ap.ssid));
+    strlcpy(work.halow_ap.psk, strcmp(argv[2], "-") == 0 ? "" : argv[2], sizeof(work.halow_ap.psk));
+    /* AP mode doesn't support OWE (mmwlan.h) - reusing provisioning_parse_security()
+     * here means "owe" is parseable but provisioning_validate() below rejects it,
+     * same as any other bad value, rather than silently mapping it to open. */
+    work.halow_ap.security = provisioning_parse_security(argv[3]);
+    work.halow_ap.op_class = (int16_t)atoi(argv[4]);
+    work.halow_ap.s1g_chan_num = (uint8_t)atoi(argv[5]);
+
+    char reason[96];
+    if (provisioning_validate(&work, reason, sizeof(reason)) != ESP_OK) {
+        provisioning_config_unlock();
+        printf("rejected: %s\n", reason);
+        return 1;
+    }
+
+    *s_cfg = work;
+    provisioning_config_unlock();
+    printf("HaLow AP config updated in RAM; run 'gwcfg-save' then reboot to apply\n");
+    return 0;
+}
+
 /* Bring-up commands. These don't touch config at all - they exist because the
  * serial console is the one interface guaranteed to work when the SoftAP
  * hasn't come up, and the questions they answer ("does the radio respond?",
@@ -410,17 +657,36 @@ static int cmd_gwcfg_status(int argc, char **argv)
     (void)argc;
     (void)argv;
 
-    uplink_link_state_t state = uplink_halow_get_link_state();
-    printf("uplink state  : %s\n", uplink_halow_link_state_name(state));
+    gw_node_role_t role = s_cfg ? s_cfg->role : GW_ROLE_CLIENT;
+    printf("role          : %s\n", provisioning_role_name(role));
 
-    int32_t rssi = uplink_halow_get_rssi();
-    if (rssi == INT32_MIN) {
-        printf("uplink RSSI   : (not associated)\n");
+    esp_netif_t *uplink_netif;
+    if (role == GW_ROLE_RELAY) {
+        printf("wifi uplink   : %s\n", uplink_wifi_link_state_name(uplink_wifi_get_link_state()));
+        int8_t rssi = uplink_wifi_get_rssi();
+        if (rssi == INT8_MIN) {
+            printf("wifi RSSI     : (not associated)\n");
+        } else {
+            printf("wifi RSSI     : %" PRId8 " dBm\n", rssi);
+        }
+        printf("halow ap      : %s\n", downlink_halow_ap_is_started() ? "started (best-effort - "
+                                                                          "mmhalow_wifi_start() has no "
+                                                                          "return code)"
+                                                                       : "not started");
+        uplink_netif = uplink_wifi_get_netif();
     } else {
-        printf("uplink RSSI   : %" PRId32 " dBm\n", rssi);
+        uplink_link_state_t state = uplink_halow_get_link_state();
+        printf("uplink state  : %s\n", uplink_halow_link_state_name(state));
+
+        int32_t rssi = uplink_halow_get_rssi();
+        if (rssi == INT32_MIN) {
+            printf("uplink RSSI   : (not associated)\n");
+        } else {
+            printf("uplink RSSI   : %" PRId32 " dBm\n", rssi);
+        }
+        uplink_netif = uplink_halow_get_netif();
     }
 
-    esp_netif_t *uplink_netif = uplink_halow_get_netif();
     esp_netif_ip_info_t ip_info;
     if (uplink_netif != NULL && esp_netif_get_ip_info(uplink_netif, &ip_info) == ESP_OK &&
         ip_info.ip.addr != 0) {
@@ -500,6 +766,33 @@ static int cmd_gwcfg_scan(int argc, char **argv)
     return 0;
 }
 
+static void channel_print_cb(const halow_ap_channel_t *chan, void *ctx)
+{
+    unsigned *n = (unsigned *)ctx;
+    (*n)++;
+    unsigned mhz = (unsigned)(chan->freq_hz / 1000000u);
+    unsigned khz = (unsigned)((chan->freq_hz % 1000000u) / 1000u);
+    printf("op_class %-4d  s1g_chan_num %-4u  %4u.%03u MHz  %2u MHz\n", chan->op_class,
+           chan->s1g_chan_num, mhz, khz, chan->bw_mhz);
+}
+
+/* GW_ROLE_RELAY only: mmwlan_ap_args wants an (op_class, s1g_chan_num) pair,
+ * not a frequency - this exists so gwcfg-set-halow-ap's arguments can be
+ * chosen from a real table instead of guessed. Pure table walk against
+ * CONFIG_HALOW_COUNTRY_CODE's already-loaded regulatory domain, no radio
+ * activity - works even before downlink_halow_ap_init() has run. */
+static int cmd_gwcfg_list_halow_channels(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    printf("HaLow channels legal in regulatory domain '%s':\n", CONFIG_HALOW_COUNTRY_CODE);
+    unsigned found = 0;
+    downlink_halow_ap_list_channels(channel_print_cb, &found);
+    printf("%u channel(s)\n", found);
+    return 0;
+}
+
 static int cmd_gwcfg_save(int argc, char **argv)
 {
     (void)argc;
@@ -547,10 +840,15 @@ esp_err_t provisioning_register_console_commands(gw_config_t *cfg)
         { .command = "gwcfg-set-node", .help = "Set node id: gwcfg-set-node <id>", .hint = NULL, .func = &cmd_gwcfg_set_node },
         { .command = "gwcfg-set-uplink", .help = "Set HaLow uplink STA config", .hint = NULL, .func = &cmd_gwcfg_set_uplink },
         { .command = "gwcfg-set-softap", .help = "Set local SoftAP config", .hint = NULL, .func = &cmd_gwcfg_set_softap },
+        { .command = "gwcfg-set-role", .help = "Set node role: gwcfg-set-role <client|relay>", .hint = NULL, .func = &cmd_gwcfg_set_role },
+        { .command = "gwcfg-set-uplink-static-ip", .help = "Set/clear a static IP on the uplink (relay leaves only)", .hint = NULL, .func = &cmd_gwcfg_set_uplink_static_ip },
+        { .command = "gwcfg-set-wifi-uplink", .help = "Set the relay role's native Wi-Fi uplink to the Pi", .hint = NULL, .func = &cmd_gwcfg_set_wifi_uplink },
+        { .command = "gwcfg-set-halow-ap", .help = "Set the relay role's HaLow AP downlink", .hint = NULL, .func = &cmd_gwcfg_set_halow_ap },
         { .command = "gwcfg-save", .help = "Persist current config to NVS", .hint = NULL, .func = &cmd_gwcfg_save },
         { .command = "gwcfg-reset", .help = "Reset in-RAM config to built-in defaults", .hint = NULL, .func = &cmd_gwcfg_reset },
         { .command = "gwcfg-status", .help = "Show live uplink/relay state, RSSI and IPs", .hint = NULL, .func = &cmd_gwcfg_status },
         { .command = "gwcfg-scan", .help = "Scan for HaLow APs on this build's channel list", .hint = NULL, .func = &cmd_gwcfg_scan },
+        { .command = "gwcfg-list-halow-channels", .help = "List legal (op_class, s1g_chan_num) pairs for gwcfg-set-halow-ap", .hint = NULL, .func = &cmd_gwcfg_list_halow_channels },
         { .command = "gwcfg-radio", .help = "Print HaLow BCF/firmware versions (proves SPI works)", .hint = NULL, .func = &cmd_gwcfg_radio },
     };
 

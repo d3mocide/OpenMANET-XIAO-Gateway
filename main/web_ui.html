@@ -182,6 +182,20 @@
     border: 1px solid var(--color-line);
     border-radius: 2px;
   }
+
+  /* A checkbox shouldn't inherit the text-input width:100%/block layout
+     above - it'd render as a full-width stretched box. */
+  label.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  label.checkbox input[type="checkbox"] {
+    width: auto;
+    margin-top: 0;
+  }
   input::placeholder { color: var(--color-muted); opacity: 0.8; }
 
   .hint {
@@ -343,49 +357,123 @@
   <h2>Node</h2>
   <fieldset>
     <label>Node ID<input type="text" id="node_id" maxlength="32" autocomplete="off"></label>
-  </fieldset>
-
-  <h2>HaLow uplink</h2>
-  <fieldset>
-    <p class="hint">Must match the mesh Pi's HaLow access point.</p>
-    <div class="actions">
-      <button type="button" class="secondary" id="scanBtn">Scan for HaLow APs</button>
-    </div>
-    <p class="hint" id="scanNote">
-      Scanning only covers channels legal in this firmware's region, and briefly
-      interrupts an established uplink. Click a result to fill in its SSID.
-    </p>
-    <div id="scanResults"></div>
-    <label>SSID<input type="text" id="uplink_ssid" maxlength="32" autocomplete="off"></label>
-    <label>Security
-      <select id="uplink_security">
-        <option value="open">Open</option>
-        <option value="owe">OWE</option>
-        <option value="sae">SAE (WPA3)</option>
+    <label>Role
+      <select id="node_role">
+        <option value="client">Client &mdash; phones/ATAK join this node's Wi-Fi, HaLow carries the uplink</option>
+        <option value="relay">Relay &mdash; HaLow fans out to other XIAOs, this node's own Wi-Fi carries the uplink</option>
       </select>
     </label>
-    <label>Passphrase
-      <input type="password" id="uplink_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
-    </label>
-    <p class="hint">Used only when security is SAE. HaLow has no WPA2-PSK mode.</p>
+    <p class="hint">
+      Relay exists for when the Pi itself can't run a HaLow access point (see
+      design/PI_SIDE.md item 0) &mdash; a relay joins the Pi's ordinary local
+      Wi-Fi directly and offers its own HaLow radio as an AP for other XIAOs
+      to associate to, instead of associating to a Pi over HaLow itself.
+      Changing this changes which radios come up entirely, not just a config
+      value &mdash; it needs a reboot to take effect either way.
+    </p>
   </fieldset>
 
-  <h2>Local Wi-Fi</h2>
-  <fieldset>
-    <p class="hint">The 2.4GHz network phones, tablets and ATAK devices join.</p>
-    <label>SSID<input type="text" id="softap_ssid" maxlength="32" autocomplete="off"></label>
-    <label>Passphrase
-      <input type="password" id="softap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
-    </label>
-    <!-- Blank means "keep current", NOT "open network": passphrases are never
-         echoed back by GET /api/config, so an empty field can't be told apart
-         from "clear it" - the firmware resolves that ambiguity as "keep".
-         Switching to an open network is a deliberate console-only action. -->
-    <p class="hint">8&ndash;63 characters. Leave blank to keep the current passphrase &mdash;
-      switching to an open network can only be done from the serial console
-      (<code>gwcfg-set-softap &lt;ssid&gt; -</code>).</p>
-    <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
-  </fieldset>
+  <div id="clientFields">
+    <h2>HaLow uplink</h2>
+    <fieldset>
+      <p class="hint">Must match the mesh Pi's (or relay's) HaLow access point.</p>
+      <div class="actions">
+        <button type="button" class="secondary" id="scanBtn">Scan for HaLow APs</button>
+      </div>
+      <p class="hint" id="scanNote">
+        Scanning only covers channels legal in this firmware's region, and briefly
+        interrupts an established uplink. Click a result to fill in its SSID.
+      </p>
+      <div id="scanResults"></div>
+      <label>SSID<input type="text" id="uplink_ssid" maxlength="32" autocomplete="off"></label>
+      <label>Security
+        <select id="uplink_security">
+          <option value="open">Open</option>
+          <option value="owe">OWE</option>
+          <option value="sae">SAE (WPA3)</option>
+        </select>
+      </label>
+      <label>Passphrase
+        <input type="password" id="uplink_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
+      </label>
+      <p class="hint">Used only when security is SAE. HaLow has no WPA2-PSK mode.</p>
+      <label class="checkbox"><input type="checkbox" id="uplink_use_static_ip"> Use a static IP instead of DHCP</label>
+      <p class="hint">
+        Only needed when the AP above is a relay node rather than a real Pi &mdash;
+        a relay's HaLow AP runs no DHCP server (see design/ROADMAP.md item 8), so
+        every leaf that joins it needs its own fixed address in that subnet.
+        Leave unchecked when joining a real Pi.
+      </p>
+      <label>Static IP<input type="text" id="uplink_static_ip" placeholder="172.16.60.2"></label>
+      <label>Gateway<input type="text" id="uplink_static_gateway" placeholder="172.16.60.1"></label>
+      <label>Netmask<input type="text" id="uplink_static_netmask" placeholder="255.255.255.0"></label>
+    </fieldset>
+
+    <h2>Local Wi-Fi</h2>
+    <fieldset>
+      <p class="hint">The 2.4GHz network phones, tablets and ATAK devices join.</p>
+      <label>SSID<input type="text" id="softap_ssid" maxlength="32" autocomplete="off"></label>
+      <label>Passphrase
+        <input type="password" id="softap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
+      </label>
+      <!-- Blank means "keep current", NOT "open network": passphrases are never
+           echoed back by GET /api/config, so an empty field can't be told apart
+           from "clear it" - the firmware resolves that ambiguity as "keep".
+           Switching to an open network is a deliberate console-only action. -->
+      <p class="hint">8&ndash;63 characters. Leave blank to keep the current passphrase &mdash;
+        switching to an open network can only be done from the serial console
+        (<code>gwcfg-set-softap &lt;ssid&gt; -</code>).</p>
+      <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
+    </fieldset>
+  </div>
+
+  <div id="relayFields">
+    <h2>Wi-Fi uplink (to the Pi)</h2>
+    <fieldset>
+      <p class="hint">
+        The Pi's own local Wi-Fi network &mdash; the same one a phone joining
+        the Pi directly would use. Ordinary WPA2-PSK, not HaLow security.
+      </p>
+      <label>SSID<input type="text" id="wifi_uplink_ssid" maxlength="32" autocomplete="off"></label>
+      <label>Passphrase
+        <input type="password" id="wifi_uplink_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
+      </label>
+    </fieldset>
+
+    <h2>HaLow AP (to other XIAOs)</h2>
+    <fieldset>
+      <p class="hint">
+        What other XIAOs' HaLow uplinks associate to. Marked ALPHA in Morse
+        Micro's own SDK and untested by this project on real hardware &mdash;
+        see design/ROADMAP.md item 8 before relying on it in the field.
+      </p>
+      <label>SSID<input type="text" id="halow_ap_ssid" maxlength="32" autocomplete="off"></label>
+      <label>Security
+        <select id="halow_ap_security">
+          <option value="open">Open</option>
+          <option value="sae">SAE (WPA3)</option>
+        </select>
+      </label>
+      <p class="hint">OWE is not supported for HaLow AP mode.</p>
+      <label>Passphrase
+        <input type="password" id="halow_ap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
+      </label>
+      <label>Op-class<input type="number" id="halow_ap_op_class" min="1"></label>
+      <label>S1G channel number<input type="number" id="halow_ap_chan_num" min="1"></label>
+      <p class="hint">
+        No auto-selection is possible here (see design/ROADMAP.md item 8) &mdash;
+        get the legal (op-class, channel) pairs for this build's region from the
+        serial console: <code>gwcfg-list-halow-channels</code>.
+      </p>
+      <label>Max stations<input type="number" id="halow_ap_max_stas" min="0" max="20" placeholder="0 = default (4)"></label>
+      <label>This AP's own IP<input type="text" id="halow_ap_ip" placeholder="172.16.60.1"></label>
+      <label>Netmask<input type="text" id="halow_ap_netmask" placeholder="255.255.255.0"></label>
+      <p class="hint">
+        No DHCP server runs here &mdash; every leaf XIAO needs a static IP of its
+        own in this subnet, set on its HaLow uplink's "Static IP" field above.
+      </p>
+    </fieldset>
+  </div>
 
   <h2>ATAK CoT relay</h2>
   <fieldset>
@@ -497,16 +585,44 @@ async function loadStatus() {
   }
 }
 
+function applyRoleVisibility(role) {
+  el('clientFields').hidden = (role === 'relay');
+  el('relayFields').hidden = (role !== 'relay');
+}
+
+el('node_role').addEventListener('change', function () {
+  applyRoleVisibility(this.value);
+});
+
 async function loadConfig() {
   try {
     var res = await fetch('/api/config', { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var cfg = await res.json();
     el('node_id').value = cfg.node_id || '';
+    el('node_role').value = cfg.role || 'client';
+    applyRoleVisibility(cfg.role || 'client');
+
     el('uplink_ssid').value = (cfg.uplink && cfg.uplink.ssid) || '';
     el('uplink_security').value = (cfg.uplink && cfg.uplink.security) || 'open';
+    el('uplink_use_static_ip').checked = !!(cfg.uplink && cfg.uplink.use_static_ip);
+    el('uplink_static_ip').value = (cfg.uplink && cfg.uplink.static_ip) || '';
+    el('uplink_static_gateway').value = (cfg.uplink && cfg.uplink.static_gateway) || '';
+    el('uplink_static_netmask').value = (cfg.uplink && cfg.uplink.static_netmask) || '';
+
     el('softap_ssid').value = (cfg.softap && cfg.softap.ssid) || '';
     el('softap_channel').value = (cfg.softap && cfg.softap.channel) || 6;
+
+    el('wifi_uplink_ssid').value = (cfg.wifi_uplink && cfg.wifi_uplink.ssid) || '';
+
+    el('halow_ap_ssid').value = (cfg.halow_ap && cfg.halow_ap.ssid) || '';
+    el('halow_ap_security').value = (cfg.halow_ap && cfg.halow_ap.security) || 'sae';
+    el('halow_ap_op_class').value = (cfg.halow_ap && cfg.halow_ap.op_class) || '';
+    el('halow_ap_chan_num').value = (cfg.halow_ap && cfg.halow_ap.s1g_chan_num) || '';
+    el('halow_ap_max_stas').value = (cfg.halow_ap && cfg.halow_ap.max_stas) || '';
+    el('halow_ap_ip').value = (cfg.halow_ap && cfg.halow_ap.ip) || '';
+    el('halow_ap_netmask').value = (cfg.halow_ap && cfg.halow_ap.netmask) || '';
+
     el('cot_group').value = (cfg.cot && cfg.cot.group) || '239.2.3.1';
     el('cot_port').value = (cfg.cot && cfg.cot.port) || 6969;
   } catch (e) {
