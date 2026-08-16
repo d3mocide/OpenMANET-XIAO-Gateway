@@ -34,6 +34,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Builds inside the official espressif/idf Docker image for the pinned
       # version - avoids the local-toolchain gotchas found setting this up by
@@ -90,10 +92,21 @@ jobs:
           check_part "$OTADATA_OFFSET" ota_data_initial.bin
           check_part "$APP_OFFSET" xiao_halow_gateway.bin
 
-          VERSION="$(git rev-parse --short HEAD)"
-          cat > site/manifest.json <<EOF
+          VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD)"
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          FULL_SHA="$(git rev-parse HEAD)"
+          COMMIT_DATE="$(git log -1 --format=%cI)"
+          COMMIT_TITLE="$(git log -1 --format=%s)"
+
+          # Create directory for this specific build
+          BUILD_DIR="site/builds/${SHORT_SHA}"
+          mkdir -p "${BUILD_DIR}"
+          cp site/bootloader.bin site/partition-table.bin site/ota_data_initial.bin site/xiao_halow_gateway.bin "${BUILD_DIR}/"
+
+          # Manifest in build folder (relative paths resolve within builds/<sha>/)
+          cat > "${BUILD_DIR}/manifest.json" <<EOF
           {
-            "name": "XIAO HaLow Gateway (US)",
+            "name": "XIAO HaLow Gateway (US) [${SHORT_SHA}]",
             "version": "${VERSION}",
             "builds": [
               {
@@ -108,6 +121,25 @@ jobs:
             ]
           }
           EOF
+
+          # Root manifest for backwards compatibility
+          cp "${BUILD_DIR}/manifest.json" site/manifest.json
+
+          # Current build metadata
+          python3 -c "
+          import json
+          data = {
+              'id': '${SHORT_SHA}',
+              'version': '${VERSION}',
+              'sha': '${SHORT_SHA}',
+              'fullSha': '${FULL_SHA}',
+              'date': '${COMMIT_DATE}',
+              'title': '''${COMMIT_TITLE}''',
+              'manifest': 'builds/${SHORT_SHA}/manifest.json'
+          }
+          with open('site/current-build.json', 'w') as f:
+              json.dump(data, f, indent=2)
+          "
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
@@ -130,6 +162,93 @@ jobs:
         with:
           name: firmware
           path: site
+
+      - name: Restore builds history cache
+        uses: actions/cache/restore@v4
+        id: restore-builds-cache
+        with:
+          path: build_history
+          key: firmware-build-history-${{ github.run_id }}
+          restore-keys: |
+            firmware-build-history-
+
+      - name: Merge build history and generate builds.json
+        run: |
+          python3 - <<'EOF'
+          import json, os, shutil
+
+          with open('site/current-build.json', 'r') as f:
+              current = json.load(f)
+
+          current_sha = current['sha']
+
+          prev_builds = []
+          history_file = 'build_history/builds.json'
+          if os.path.exists(history_file):
+              try:
+                  with open(history_file, 'r') as f:
+                      hist = json.load(f)
+                      prev_builds = hist.get('builds', [])
+              except Exception as e:
+                  print(f"Warning: could not read history: {e}")
+
+          # Deduplicate against current build
+          filtered_prev = [b for b in prev_builds if b.get('sha') != current_sha]
+
+          # Keep current + up to 3 previous builds = 4 builds total
+          selected_builds = [current] + filtered_prev[:3]
+
+          for idx, b in enumerate(selected_builds):
+              b['isLatest'] = (idx == 0)
+              if idx == 0:
+                  b['tag'] = 'Latest'
+              else:
+                  b['tag'] = f"Previous (n-{idx})"
+
+          # Copy cached previous builds to site/builds/
+          os.makedirs('site/builds', exist_ok=True)
+          for b in selected_builds[1:]:
+              sha = b.get('sha')
+              src = os.path.join('build_history', 'builds', sha)
+              dst = os.path.join('site', 'builds', sha)
+              if os.path.isdir(src) and not os.path.exists(dst):
+                  shutil.copytree(src, dst)
+
+          # Write site builds.json
+          index_data = {
+              'latest': current_sha,
+              'builds': selected_builds
+          }
+          with open('site/builds.json', 'w') as f:
+              json.dump(index_data, f, indent=2)
+
+          # Update build_history for caching
+          os.makedirs('build_history/builds', exist_ok=True)
+          with open('build_history/builds.json', 'w') as f:
+              json.dump(index_data, f, indent=2)
+
+          current_build_dir = os.path.join('site', 'builds', current_sha)
+          hist_current_dir = os.path.join('build_history', 'builds', current_sha)
+          if os.path.isdir(current_build_dir):
+              if os.path.exists(hist_current_dir):
+                  shutil.rmtree(hist_current_dir)
+              shutil.copytree(current_build_dir, hist_current_dir)
+
+          # Prune expired builds from build_history
+          valid_shas = {b.get('sha') for b in selected_builds}
+          for item in os.listdir('build_history/builds'):
+              if item not in valid_shas:
+                  p = os.path.join('build_history', 'builds', item)
+                  if os.path.isdir(p):
+                      shutil.rmtree(p)
+          EOF
+
+      - name: Save builds history cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: build_history
+          key: firmware-build-history-${{ github.run_id }}
 
       - name: Add flasher page
         run: cp docs/index.html site/

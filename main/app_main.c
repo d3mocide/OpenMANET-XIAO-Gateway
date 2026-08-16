@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "esp_app_desc.h"
 #include "esp_core_dump.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -337,6 +338,9 @@ void app_main(void)
         bring_up_client_role(&s_cfg);
     }
 
-    ESP_LOGI(TAG, "xiao-halow-gateway up: node_id=%s role=%s", s_cfg.node_id,
+    const esp_app_desc_t *desc = esp_app_get_description();
+    ESP_LOGI(TAG, "xiao-halow-gateway up: version=%s node_id=%s role=%s",
+             desc ? desc->version : "unknown",
+             s_cfg.node_id,
              s_cfg.role == GW_ROLE_RELAY ? "relay" : "client");
 }

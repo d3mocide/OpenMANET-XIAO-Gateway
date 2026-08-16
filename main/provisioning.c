@@ -7,6 +7,7 @@
 
 #include "cot_relay.h"
 #include "downlink_halow_ap.h"
+#include "esp_app_desc.h"
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -656,6 +657,9 @@ static int cmd_gwcfg_status(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+
+    const esp_app_desc_t *desc = esp_app_get_description();
+    printf("firmware ver  : %s\n", desc ? desc->version : "unknown");
 
     gw_node_role_t role = s_cfg ? s_cfg->role : GW_ROLE_CLIENT;
     printf("role          : %s\n", provisioning_role_name(role));

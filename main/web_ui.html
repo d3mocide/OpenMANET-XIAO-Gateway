@@ -14,12 +14,16 @@
   :root {
     --color-bg: #f3f4f6;
     --color-surface: #ffffff;
+    --color-surface-subtle: #eaedf1;
     --color-ink: #171b21;
     --color-muted: #5c6570;
     --color-accent: #c1662d;
+    --color-accent-bg: rgba(193, 102, 45, 0.12);
     --color-line: #dde1e6;
     --color-ok: #1e7e34;
+    --color-ok-bg: rgba(30, 126, 52, 0.12);
     --color-warn: #a12622;
+    --color-warn-bg: rgba(161, 38, 34, 0.12);
     --color-field: #ffffff;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
     --font-body: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
@@ -29,12 +33,16 @@
     :root {
       --color-bg: #12151a;
       --color-surface: #1a1f26;
+      --color-surface-subtle: #222933;
       --color-ink: #e8eaed;
       --color-muted: #9aa3af;
       --color-accent: #e0924f;
+      --color-accent-bg: rgba(224, 146, 79, 0.15);
       --color-line: #2a2f38;
       --color-ok: #5cc27a;
+      --color-ok-bg: rgba(92, 194, 122, 0.15);
       --color-warn: #f08a80;
+      --color-warn-bg: rgba(240, 138, 128, 0.15);
       --color-field: #12161c;
     }
   }
@@ -45,11 +53,11 @@
     background: var(--color-bg);
     color: var(--color-ink);
     font-family: var(--font-body);
-    font-size: 16px;
-    line-height: 1.6;
-    max-width: 38rem;
+    font-size: 15px;
+    line-height: 1.5;
+    max-width: 44rem;
     margin: 0 auto;
-    padding: clamp(1.25rem, 4vw, 3rem) 1.25rem 4rem;
+    padding: clamp(1rem, 3vw, 2rem) 1rem 6.5rem;
   }
 
   button:focus-visible, input:focus-visible, select:focus-visible {
@@ -57,238 +65,495 @@
     outline-offset: 2px;
   }
 
-  header { margin-bottom: 1.75rem; }
+  /* --- Top Header & HUD Bar --- */
+  header {
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--color-line);
+    padding-bottom: 1rem;
+  }
 
   .eyebrow {
     display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.5rem;
     font-family: var(--font-mono);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 600;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.16em;
     text-transform: uppercase;
     color: var(--color-muted);
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.5rem;
   }
 
-  .signal-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
-  .signal-bars span { display: block; width: 3px; background: var(--color-accent); }
+  .eyebrow-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .signal-bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; }
+  .signal-bars span { display: block; width: 3px; background: var(--color-accent); border-radius: 1px; }
   .signal-bars span:nth-child(1) { height: 40%; }
   .signal-bars span:nth-child(2) { height: 70%; }
   .signal-bars span:nth-child(3) { height: 100%; }
 
+  .header-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
   h1 {
     font-family: var(--font-mono);
-    font-size: clamp(1.35rem, 4vw, 1.65rem);
+    font-size: clamp(1.2rem, 3.5vw, 1.45rem);
     font-weight: 700;
     letter-spacing: -0.01em;
     margin: 0;
-  }
-  h1 span {
-    display: block;
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: var(--color-accent);
-    margin-top: 0.35rem;
+    line-height: 1.2;
   }
 
-  h2 {
+  .header-badges {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .badge {
     font-family: var(--font-mono);
-    font-size: 0.8rem;
+    font-size: 0.68rem;
     font-weight: 700;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
+    padding: 0.2rem 0.55rem;
+    border-radius: 2px;
+  }
+  .badge-accent {
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
+  }
+  .badge-muted {
+    background: var(--color-surface);
     color: var(--color-muted);
-    border-top: 1px solid var(--color-line);
-    padding-top: 0.5rem;
-    margin: 2.25rem 0 1rem;
+    border: 1px solid var(--color-line);
   }
 
-  /* HUD-style bracketed panel, matching the flasher's callout treatment. */
-  .panel {
+  /* --- Navigation Tab Bar --- */
+  .nav-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.35rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--color-line);
+    padding-bottom: 0.6rem;
+  }
+
+  .tab-btn {
+    background: var(--color-surface);
+    color: var(--color-muted);
+    border: 1px solid var(--color-line);
+    padding: 0.55rem 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tab-btn:hover {
+    color: var(--color-ink);
+    border-color: var(--color-accent);
+  }
+  .tab-btn.active {
+    background: var(--color-accent);
+    color: #1a1006;
+    border-color: var(--color-accent);
+  }
+
+  .tab-pane {
+    display: none;
+    animation: fadeIn 0.15s ease;
+  }
+  .tab-pane.active {
+    display: block;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0.6; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* --- HUD Bracketed Cards & Panels --- */
+  .hud-card {
     position: relative;
     background: var(--color-surface);
+    border: 1px solid var(--color-line);
     padding: 1rem 1.15rem;
-    margin: 1.25rem 0;
+    margin-bottom: 1rem;
+    border-radius: 3px;
   }
-  .panel::before, .panel::after {
+  .hud-card::before, .hud-card::after {
     content: "";
     position: absolute;
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border: 2px solid var(--color-accent);
+    pointer-events: none;
   }
-  .panel::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
-  .panel::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+  .hud-card::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .hud-card::after { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
 
-  /* --- Status --- */
-  .status-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-    gap: 0.85rem 1.25rem;
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid var(--color-line);
+    padding-bottom: 0.4rem;
   }
-  .stat-label {
+
+  .card-title {
     font-family: var(--font-mono);
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-muted);
   }
+
+  /* --- Metric Grid & HUD Tiles --- */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.75rem 1rem;
+  }
+
+  .metric-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
   .stat-value {
     font-family: var(--font-mono);
-    font-size: 0.95rem;
-    /* Values change on every poll; without this the columns jitter. */
+    font-size: 0.92rem;
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
     word-break: break-all;
+    display: flex;
+    align-items: center;
   }
 
   .dot {
     display: inline-block;
-    width: 0.55rem;
-    height: 0.55rem;
+    width: 0.5rem;
+    height: 0.5rem;
     border-radius: 50%;
     margin-right: 0.4rem;
     background: var(--color-muted);
-    vertical-align: baseline;
+    flex-shrink: 0;
   }
-  .dot.up { background: var(--color-ok); }
-  .dot.down { background: var(--color-warn); }
+  .dot.up { background: var(--color-ok); box-shadow: 0 0 6px var(--color-ok); }
+  .dot.down { background: var(--color-warn); box-shadow: 0 0 6px var(--color-warn); }
 
-  /* --- Form --- */
+  /* Signal Meter Bars */
+  .signal-meter {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 12px;
+    margin-left: 0.5rem;
+    vertical-align: middle;
+  }
+  .signal-meter span {
+    display: block;
+    width: 3px;
+    background: var(--color-line);
+    border-radius: 1px;
+  }
+  .signal-meter.level-1 span:nth-child(1) { background: var(--color-warn); }
+  .signal-meter.level-2 span:nth-child(1),
+  .signal-meter.level-2 span:nth-child(2) { background: var(--color-accent); }
+  .signal-meter.level-3 span:nth-child(1),
+  .signal-meter.level-3 span:nth-child(2),
+  .signal-meter.level-3 span:nth-child(3) { background: var(--color-ok); }
+  .signal-meter.level-4 span:nth-child(1),
+  .signal-meter.level-4 span:nth-child(2),
+  .signal-meter.level-4 span:nth-child(3),
+  .signal-meter.level-4 span:nth-child(4) { background: var(--color-ok); }
+  .signal-meter span:nth-child(1) { height: 25%; }
+  .signal-meter span:nth-child(2) { height: 50%; }
+  .signal-meter span:nth-child(3) { height: 75%; }
+  .signal-meter span:nth-child(4) { height: 100%; }
+
+  /* --- Form Inputs --- */
   fieldset { border: 0; padding: 0; margin: 0; }
-  legend { padding: 0; }
+  
+  .form-group {
+    margin-bottom: 0.9rem;
+  }
 
   label {
     display: block;
-    margin-top: 0.85rem;
+    margin-top: 0.6rem;
     font-family: var(--font-mono);
     font-size: 0.65rem;
     font-weight: 600;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-muted);
   }
 
   input, select {
     width: 100%;
-    margin-top: 0.3rem;
+    margin-top: 0.25rem;
     padding: 0.55rem 0.65rem;
     font-family: var(--font-mono);
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--color-ink);
     background: var(--color-field);
     border: 1px solid var(--color-line);
     border-radius: 2px;
   }
 
-  /* A checkbox shouldn't inherit the text-input width:100%/block layout
-     above - it'd render as a full-width stretched box. */
   label.checkbox {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     text-transform: none;
     letter-spacing: normal;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin-top: 0.75rem;
   }
   label.checkbox input[type="checkbox"] {
     width: auto;
     margin-top: 0;
+    cursor: pointer;
   }
-  input::placeholder { color: var(--color-muted); opacity: 0.8; }
+
+  input::placeholder { color: var(--color-muted); opacity: 0.7; }
 
   .hint {
-    font-size: 0.8rem;
-    line-height: 1.5;
+    font-size: 0.78rem;
+    line-height: 1.45;
     color: var(--color-muted);
-    margin: 0.35rem 0 0;
-    /* Labels are uppercase mono; hints are deliberately not. */
-    text-transform: none;
-    letter-spacing: normal;
+    margin: 0.3rem 0 0;
     font-family: var(--font-body);
-    font-weight: 400;
   }
 
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 1.75rem;
+  /* Role Selection Radio Cards */
+  .role-picker {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+    margin-top: 0.35rem;
   }
-
-  button {
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    padding: 0.7rem 1.3rem;
-    border-radius: 2px;
-    cursor: pointer;
-    border: 1px solid var(--color-accent);
-  }
-  button[type="submit"] { background: var(--color-accent); color: #1a1006; }
-  button.secondary { background: transparent; color: var(--color-accent); }
-  button:disabled { opacity: 0.5; cursor: progress; }
-
-  .logview {
-    margin: 12px 0 0;
-    padding: 10px;
-    max-height: 320px;
-    overflow: auto;
+  .role-card {
     background: var(--color-bg);
     border: 1px solid var(--color-line);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
+    padding: 0.75rem 0.85rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.15s ease;
   }
-  .logview:empty { display: none; }
+  .role-card:hover {
+    border-color: var(--color-accent);
+  }
+  .role-card.selected {
+    background: var(--color-accent-bg);
+    border-color: var(--color-accent);
+  }
+  .role-title {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--color-ink);
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+  .role-desc {
+    font-size: 0.72rem;
+    color: var(--color-muted);
+    line-height: 1.35;
+    margin: 0;
+  }
 
-  .scan-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  /* Scan Table */
+  .scan-box {
+    background: var(--color-bg);
+    border: 1px solid var(--color-line);
+    padding: 0.75rem;
+    border-radius: 2px;
+    margin: 0.6rem 0 0.9rem;
+  }
+  .scan-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .scan-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.6rem;
+    font-size: 0.8rem;
+  }
   .scan-table th {
     text-align: left;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 0.65rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--color-muted);
     border-bottom: 1px solid var(--color-line);
-    padding: 4px 8px 4px 0;
+    padding: 0.3rem 0.4rem;
   }
-  .scan-table td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--color-line); }
+  .scan-table td {
+    padding: 0.45rem 0.4rem;
+    border-bottom: 1px solid var(--color-line);
+  }
   .scan-table tbody tr { cursor: pointer; }
-  .scan-table tbody tr:hover { background: var(--color-bg); }
-  .scan-table .num { font-family: var(--font-mono); white-space: nowrap; }
+  .scan-table tbody tr:hover { background: var(--color-surface); }
+  .scan-table .num { font-family: var(--font-mono); font-size: 0.75rem; }
 
-  /* Pinned so a save/error result is never below the fold on a phone - the
-     previous version put this at the very bottom of a long form. */
+  /* Log Viewer */
+  .log-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+  }
+  .logview {
+    margin: 0;
+    padding: 0.75rem;
+    height: 380px;
+    overflow-y: auto;
+    background: var(--color-bg);
+    border: 1px solid var(--color-line);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-radius: 2px;
+  }
+
+  /* Setup Callout Banner */
+  .setup-banner {
+    display: block;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-left: 3px solid var(--color-warn);
+    background: var(--color-warn-bg);
+    border-radius: 2px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+  .setup-banner[hidden] { display: none; }
+
+  /* --- Docked Bottom HUD Action Bar --- */
+  .docked-action-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-line);
+    padding: 0.65rem 1rem;
+    z-index: 100;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.15);
+  }
+  .action-bar-inner {
+    max-width: 44rem;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .action-bar-status {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .action-bar-btns {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  button {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.6rem 1.1rem;
+    border-radius: 2px;
+    cursor: pointer;
+    border: 1px solid var(--color-accent);
+    transition: all 0.15s ease;
+  }
+  button.btn-primary { background: var(--color-accent); color: #1a1006; }
+  button.btn-primary:hover { filter: brightness(1.08); }
+  button.btn-secondary { background: transparent; color: var(--color-accent); }
+  button.btn-secondary:hover { background: var(--color-accent-bg); }
+  button.btn-sm { padding: 0.35rem 0.7rem; font-size: 0.68rem; }
+  button:disabled { opacity: 0.5; cursor: progress; }
+
+  /* Toast Notification */
   #status {
     position: fixed;
     left: 50%;
-    bottom: 1rem;
+    bottom: 4.5rem;
     transform: translateX(-50%);
-    width: calc(100% - 2.5rem);
-    max-width: 35.5rem;
-    padding: 0.7rem 0.9rem;
+    width: calc(100% - 2rem);
+    max-width: 40rem;
+    padding: 0.65rem 0.9rem;
     border-radius: 2px;
-    font-size: 0.9rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
     display: none;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+    z-index: 101;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   }
   #status.ok { display: block; background: var(--color-ok); color: #fff; }
   #status.err { display: block; background: var(--color-warn); color: #fff; }
-  /* [hidden] needs the explicit rule: the element sets `display` when shown,
-     and a bare attribute would otherwise lose to that specificity. */
-  .setup-banner { display: block; padding: 12px 14px; margin: 0 0 16px;
-                  border-left: 4px solid var(--color-warn); background: rgba(0,0,0,0.05);
-                  border-radius: 4px; line-height: 1.5; }
-  .setup-banner[hidden] { display: none; }
 
-  @media (prefers-reduced-motion: no-preference) {
-    .dot { transition: background-color 0.3s ease; }
+  @media (max-width: 480px) {
+    .nav-tabs { grid-template-columns: repeat(2, 1fr); }
+    .role-picker { grid-template-columns: 1fr; }
+    .action-bar-inner { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+    .action-bar-btns { justify-content: flex-end; }
   }
 </style>
 </head>
@@ -296,210 +561,368 @@
 
 <header>
   <div class="eyebrow">
-    <span class="signal-bars" aria-hidden="true"><span></span><span></span><span></span></span>
-    OpenMANET &middot; Gateway Config
+    <div class="eyebrow-left">
+      <span class="signal-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+      OpenMANET · Gateway HUD
+    </div>
+    <div id="hdrNode" class="badge badge-muted">—</div>
   </div>
-  <h1>XIAO HaLow Gateway<span id="hdrNode">&nbsp;</span></h1>
+  <div class="header-main">
+    <h1>XIAO HaLow Gateway</h1>
+    <div class="header-badges">
+      <span id="hdrRoleBadge" class="badge badge-accent">Client Node</span>
+      <span id="hdrVerBadge" class="badge badge-muted">v—</span>
+    </div>
+  </div>
 </header>
 
-<!-- Shown only until an uplink has been provisioned. A factory-fresh node has
-     no HaLow AP to join and does not attempt one, which without this reads as
-     a broken radio rather than as an unfinished setup step. -->
 <div id="setupBanner" class="setup-banner" hidden>
-  <strong>This node has no HaLow uplink configured yet.</strong>
-  It will not try to connect until you set one. Use
-  <em>Scan for HaLow APs</em> below to find your gateway's AP, pick it, then save and reboot.
+  <strong>Unconfigured Node:</strong> This node does not have an uplink access point configured yet. Switch to the <strong>Wireless</strong> tab to scan for and connect to your mesh Pi (or relay).
 </div>
 
-<h2>Status</h2>
-<div class="panel">
-  <div class="status-grid">
-    <div>
-      <div class="stat-label">HaLow uplink</div>
-      <div class="stat-value"><span class="dot" id="dotUplink"></span><span id="stUplink">&mdash;</span></div>
-    </div>
-    <div>
-      <div class="stat-label">Signal</div>
-      <div class="stat-value" id="stRssi">&mdash;</div>
-    </div>
-    <div>
-      <div class="stat-label">Uplink IP</div>
-      <div class="stat-value" id="stUplinkIp">&mdash;</div>
-    </div>
-    <div>
-      <div class="stat-label">Local Wi-Fi IP</div>
-      <div class="stat-value" id="stApIp">&mdash;</div>
-    </div>
-    <div>
-      <div class="stat-label">Clients</div>
-      <div class="stat-value" id="stClients">&mdash;</div>
-    </div>
-    <div>
-      <div class="stat-label">CoT relay</div>
-      <div class="stat-value"><span class="dot" id="dotCot"></span><span id="stCot">&mdash;</span></div>
-    </div>
-    <div>
-      <div class="stat-label">Uptime</div>
-      <div class="stat-value" id="stUptime">&mdash;</div>
-    </div>
-    <div>
-      <div class="stat-label">Free heap</div>
-      <div class="stat-value" id="stHeap">&mdash;</div>
-    </div>
-    <div>
-      <div class="stat-label">Region / slot</div>
-      <div class="stat-value" id="stRegion">&mdash;</div>
-    </div>
-  </div>
-</div>
+<!-- Navigation Tabs -->
+<nav class="nav-tabs" role="tablist">
+  <button type="button" class="tab-btn active" data-tab="tab-overview" role="tab" aria-selected="true">[1] Overview</button>
+  <button type="button" class="tab-btn" data-tab="tab-wireless" role="tab" aria-selected="false">[2] Wireless</button>
+  <button type="button" class="tab-btn" data-tab="tab-services" role="tab" aria-selected="false">[3] Services</button>
+  <button type="button" class="tab-btn" data-tab="tab-log" role="tab" aria-selected="false">[4] Log</button>
+</nav>
 
 <form id="cfgForm">
-  <h2>Node</h2>
-  <fieldset>
-    <label>Node ID<input type="text" id="node_id" maxlength="32" autocomplete="off"></label>
-    <label>Role
-      <select id="node_role">
-        <option value="client">Client &mdash; phones/ATAK join this node's Wi-Fi, HaLow carries the uplink</option>
-        <option value="relay">Relay &mdash; HaLow fans out to other XIAOs, this node's own Wi-Fi carries the uplink</option>
-      </select>
-    </label>
-    <p class="hint">
-      Relay exists for when the Pi itself can't run a HaLow access point (see
-      design/PI_SIDE.md item 0) &mdash; a relay joins the Pi's ordinary local
-      Wi-Fi directly and offers its own HaLow radio as an AP for other XIAOs
-      to associate to, instead of associating to a Pi over HaLow itself.
-      Changing this changes which radios come up entirely, not just a config
-      value &mdash; it needs a reboot to take effect either way.
-    </p>
-  </fieldset>
 
-  <div id="clientFields">
-    <h2>HaLow uplink</h2>
-    <fieldset>
-      <p class="hint">Must match the mesh Pi's (or relay's) HaLow access point.</p>
-      <div class="actions">
-        <button type="button" class="secondary" id="scanBtn">Scan for HaLow APs</button>
+  <!-- TAB 1: OVERVIEW / DASHBOARD -->
+  <section id="tab-overview" class="tab-pane active" role="tabpanel">
+    
+    <!-- Uplink Status Card -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Mesh Uplink Link</span>
+        <span id="stUplinkType" class="badge badge-muted">HaLow STA</span>
       </div>
-      <p class="hint" id="scanNote">
-        Scanning only covers channels legal in this firmware's region, and briefly
-        interrupts an established uplink. Click a result to fill in its SSID.
-      </p>
-      <div id="scanResults"></div>
-      <label>SSID<input type="text" id="uplink_ssid" maxlength="32" autocomplete="off"></label>
-      <label>Security
-        <select id="uplink_security">
-          <option value="open">Open</option>
-          <option value="owe">OWE</option>
-          <option value="sae">SAE (WPA3)</option>
-        </select>
-      </label>
-      <label>Passphrase
-        <input type="password" id="uplink_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
-      </label>
-      <p class="hint">Used only when security is SAE. HaLow has no WPA2-PSK mode.</p>
-      <label class="checkbox"><input type="checkbox" id="uplink_use_static_ip"> Use a static IP instead of DHCP</label>
-      <p class="hint">
-        Only needed when the AP above is a relay node rather than a real Pi &mdash;
-        a relay's HaLow AP runs no DHCP server (see design/ROADMAP.md item 8), so
-        every leaf that joins it needs its own fixed address in that subnet.
-        Leave unchecked when joining a real Pi.
-      </p>
-      <label>Static IP<input type="text" id="uplink_static_ip" placeholder="172.16.60.2"></label>
-      <label>Gateway<input type="text" id="uplink_static_gateway" placeholder="172.16.60.1"></label>
-      <label>Netmask<input type="text" id="uplink_static_netmask" placeholder="255.255.255.0"></label>
-    </fieldset>
+      <div class="metrics-grid">
+        <div class="metric-item">
+          <span class="stat-label">Link State</span>
+          <span class="stat-value"><span id="dotUplink" class="dot"></span><span id="stUplink">Connecting…</span></span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Signal (RSSI)</span>
+          <span class="stat-value">
+            <span id="stRssi">&mdash;</span>
+            <span id="stRssiMeter" class="signal-meter" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+          </span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Uplink IP</span>
+          <span class="stat-value" id="stUplinkIp">&mdash;</span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Regulatory Domain</span>
+          <span class="stat-value" id="stRegionDomain">US (902-928MHz)</span>
+        </div>
+      </div>
+    </div>
 
-    <h2>Local Wi-Fi</h2>
-    <fieldset>
-      <p class="hint">The 2.4GHz network phones, tablets and ATAK devices join.</p>
-      <label>SSID<input type="text" id="softap_ssid" maxlength="32" autocomplete="off"></label>
-      <label>Passphrase
-        <input type="password" id="softap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
-      </label>
-      <!-- Blank means "keep current", NOT "open network": passphrases are never
-           echoed back by GET /api/config, so an empty field can't be told apart
-           from "clear it" - the firmware resolves that ambiguity as "keep".
-           Switching to an open network is a deliberate console-only action. -->
-      <p class="hint">8&ndash;63 characters. Leave blank to keep the current passphrase &mdash;
-        switching to an open network can only be done from the serial console
-        (<code>gwcfg-set-softap &lt;ssid&gt; -</code>).</p>
-      <label>Channel<input type="number" id="softap_channel" min="1" max="13"></label>
-    </fieldset>
-  </div>
+    <!-- Downlink AP Card -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Local Access Point</span>
+        <span id="stApType" class="badge badge-muted">2.4GHz SoftAP</span>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-item">
+          <span class="stat-label">Local IP (Gateway)</span>
+          <span class="stat-value" id="stApIp">&mdash;</span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Connected Clients</span>
+          <span class="stat-value" id="stClients">&mdash;</span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">ATAK CoT Relay</span>
+          <span class="stat-value"><span id="dotCot" class="dot"></span><span id="stCot">&mdash;</span></span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">NAT Forwarding</span>
+          <span class="stat-value" id="stNatStatus">Enabled</span>
+        </div>
+      </div>
+    </div>
 
-  <div id="relayFields">
-    <h2>Wi-Fi uplink (to the Pi)</h2>
-    <fieldset>
-      <p class="hint">
-        The Pi's own local Wi-Fi network &mdash; the same one a phone joining
-        the Pi directly would use. Ordinary WPA2-PSK, not HaLow security.
-      </p>
-      <label>SSID<input type="text" id="wifi_uplink_ssid" maxlength="32" autocomplete="off"></label>
-      <label>Passphrase
-        <input type="password" id="wifi_uplink_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
-      </label>
-    </fieldset>
+    <!-- System & Diagnostics Grid Card -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Hardware & Diagnostics</span>
+        <span class="badge badge-muted">ESP32-S3</span>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-item">
+          <span class="stat-label">Uptime</span>
+          <span class="stat-value" id="stUptime">&mdash;</span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Free Heap Memory</span>
+          <span class="stat-value" id="stHeap">&mdash;</span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Firmware Version</span>
+          <span class="stat-value" id="stVersion">&mdash;</span>
+        </div>
+        <div class="metric-item">
+          <span class="stat-label">Active Slot</span>
+          <span class="stat-value" id="stPartition">&mdash;</span>
+        </div>
+      </div>
+    </div>
 
-    <h2>HaLow AP (to other XIAOs)</h2>
-    <fieldset>
-      <p class="hint">
-        What other XIAOs' HaLow uplinks associate to. Marked ALPHA in Morse
-        Micro's own SDK and untested by this project on real hardware &mdash;
-        see design/ROADMAP.md item 8 before relying on it in the field.
-      </p>
-      <label>SSID<input type="text" id="halow_ap_ssid" maxlength="32" autocomplete="off"></label>
-      <label>Security
-        <select id="halow_ap_security">
-          <option value="open">Open</option>
-          <option value="sae">SAE (WPA3)</option>
-        </select>
-      </label>
-      <p class="hint">OWE is not supported for HaLow AP mode.</p>
-      <label>Passphrase
-        <input type="password" id="halow_ap_psk" maxlength="64" autocomplete="new-password" placeholder="leave blank to keep current">
-      </label>
-      <label>Op-class<input type="number" id="halow_ap_op_class" min="1"></label>
-      <label>S1G channel number<input type="number" id="halow_ap_chan_num" min="1"></label>
-      <p class="hint">
-        No auto-selection is possible here (see design/ROADMAP.md item 8) &mdash;
-        get the legal (op-class, channel) pairs for this build's region from the
-        serial console: <code>gwcfg-list-halow-channels</code>.
-      </p>
-      <label>Max stations<input type="number" id="halow_ap_max_stas" min="0" max="20" placeholder="0 = default (4)"></label>
-      <label>This AP's own IP<input type="text" id="halow_ap_ip" placeholder="172.16.60.1"></label>
-      <label>Netmask<input type="text" id="halow_ap_netmask" placeholder="255.255.255.0"></label>
-      <p class="hint">
-        No DHCP server runs here &mdash; every leaf XIAO needs a static IP of its
-        own in this subnet, set on its HaLow uplink's "Static IP" field above.
-      </p>
-    </fieldset>
-  </div>
+  </section>
 
-  <h2>ATAK CoT relay</h2>
-  <fieldset>
-    <label>Multicast group<input type="text" id="cot_group" maxlength="15" autocomplete="off"></label>
-    <label>Port<input type="number" id="cot_port" min="1" max="65535"></label>
-  </fieldset>
+  <!-- TAB 2: WIRELESS CONFIG & RADIOS -->
+  <section id="tab-wireless" class="tab-pane" role="tabpanel">
 
-  <div class="actions">
-    <button type="submit" id="saveBtn">Save</button>
-    <button type="button" class="secondary" id="rebootBtn">Reboot</button>
-  </div>
-  <p class="hint">Saved changes apply on the next reboot.</p>
+    <!-- Role Selection Card -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Node Role</span>
+      </div>
+      <div class="role-picker">
+        <div class="role-card selected" id="roleCardClient">
+          <span class="role-title">Client (Leaf)</span>
+          <p class="role-desc">Phones/ATAK connect via 2.4GHz Wi-Fi. HaLow carries the mesh uplink to Pi.</p>
+        </div>
+        <div class="role-card" id="roleCardRelay">
+          <span class="role-title">Relay (Bridge)</span>
+          <p class="role-desc">Joins Pi via local Wi-Fi. Broadcasts HaLow AP to connect distant leaf XIAOs.</p>
+        </div>
+      </div>
+      <input type="hidden" id="node_role" value="client">
+      <p class="hint">Role changes dictate which physical radios come up. Requires a reboot to apply.</p>
+    </div>
+
+    <!-- Client Role Fields -->
+    <div id="clientFields">
+      <!-- HaLow Uplink -->
+      <div class="hud-card">
+        <div class="card-header">
+          <span class="card-title">HaLow Uplink STA</span>
+          <span class="badge badge-accent">Long Range 900MHz</span>
+        </div>
+
+        <div class="scan-box">
+          <div class="scan-actions">
+            <span class="stat-label">Airwaves Scanner</span>
+            <button type="button" class="btn-secondary btn-sm" id="scanBtn">Scan for HaLow APs</button>
+          </div>
+          <p class="hint" id="scanNote">
+            Scanning covers US legal channels (902–928 MHz). Click a row to adopt its SSID.
+          </p>
+          <div id="scanResults"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="uplink_ssid">HaLow AP SSID</label>
+          <input type="text" id="uplink_ssid" maxlength="32" autocomplete="off" placeholder="Pi or Relay HaLow SSID">
+        </div>
+
+        <div class="form-group">
+          <label for="uplink_security">Security Mode</label>
+          <select id="uplink_security">
+            <option value="open">Open (No password)</option>
+            <option value="owe">OWE (Opportunistic Wireless Encryption)</option>
+            <option value="sae">SAE (WPA3-Personal)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="uplink_psk">SAE Passphrase</label>
+          <input type="password" id="uplink_psk" maxlength="64" autocomplete="new-password" placeholder="Leave blank to keep current">
+          <p class="hint">Only used if security is SAE. HaLow does not support legacy WPA2-PSK.</p>
+        </div>
+
+        <label class="checkbox">
+          <input type="checkbox" id="uplink_use_static_ip"> Use static IP on HaLow uplink
+        </label>
+        <p class="hint">Required when associating to a Relay node (since HaLow AP runs without DHCP).</p>
+
+        <div id="staticIpFields" style="display: none; margin-top: 0.5rem;">
+          <div class="form-group">
+            <label for="uplink_static_ip">Static IP Address</label>
+            <input type="text" id="uplink_static_ip" placeholder="172.16.60.2">
+          </div>
+          <div class="form-group">
+            <label for="uplink_static_gateway">Gateway IP</label>
+            <input type="text" id="uplink_static_gateway" placeholder="172.16.60.1">
+          </div>
+          <div class="form-group">
+            <label for="uplink_static_netmask">Subnet Mask</label>
+            <input type="text" id="uplink_static_netmask" placeholder="255.255.255.0">
+          </div>
+        </div>
+      </div>
+
+      <!-- Local SoftAP Wi-Fi -->
+      <div class="hud-card">
+        <div class="card-header">
+          <span class="card-title">Local 2.4GHz Wi-Fi (SoftAP)</span>
+          <span class="badge badge-muted">Phone / ATAK Access</span>
+        </div>
+        <div class="form-group">
+          <label for="softap_ssid">Wi-Fi SSID</label>
+          <input type="text" id="softap_ssid" maxlength="32" autocomplete="off" placeholder="xiao-gateway">
+        </div>
+        <div class="form-group">
+          <label for="softap_psk">Wi-Fi Passphrase</label>
+          <input type="password" id="softap_psk" maxlength="64" autocomplete="new-password" placeholder="Leave blank to keep current">
+          <p class="hint">8–63 chars. Blank preserves existing password. SoftAP subnet is 172.16.50.0/24.</p>
+        </div>
+        <div class="form-group">
+          <label for="softap_channel">Wi-Fi Channel</label>
+          <input type="number" id="softap_channel" min="1" max="13" placeholder="6">
+        </div>
+      </div>
+    </div>
+
+    <!-- Relay Role Fields -->
+    <div id="relayFields" hidden>
+      <!-- Wi-Fi Uplink to Pi -->
+      <div class="hud-card">
+        <div class="card-header">
+          <span class="card-title">Wi-Fi Uplink (To Mesh Pi)</span>
+          <span class="badge badge-accent">2.4GHz STA</span>
+        </div>
+        <div class="form-group">
+          <label for="wifi_uplink_ssid">Pi Wi-Fi SSID</label>
+          <input type="text" id="wifi_uplink_ssid" maxlength="32" autocomplete="off" placeholder="Pi Local AP SSID">
+        </div>
+        <div class="form-group">
+          <label for="wifi_uplink_psk">Pi Wi-Fi Passphrase</label>
+          <input type="password" id="wifi_uplink_psk" maxlength="64" autocomplete="new-password" placeholder="Leave blank to keep current">
+        </div>
+      </div>
+
+      <!-- HaLow AP Downlink -->
+      <div class="hud-card">
+        <div class="card-header">
+          <span class="card-title">HaLow AP (To Leaf Nodes)</span>
+          <span class="badge badge-accent">900MHz AP Mode</span>
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_ssid">HaLow AP SSID</label>
+          <input type="text" id="halow_ap_ssid" maxlength="32" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_security">Security</label>
+          <select id="halow_ap_security">
+            <option value="open">Open</option>
+            <option value="sae">SAE (WPA3)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_psk">Passphrase</label>
+          <input type="password" id="halow_ap_psk" maxlength="64" autocomplete="new-password" placeholder="Leave blank to keep current">
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_bw_select">HaLow AP Bandwidth</label>
+          <select id="halow_ap_bw_select">
+            <option value="4">4 MHz (Standard / Recommended)</option>
+            <option value="8">8 MHz (High Speed)</option>
+            <option value="2">2 MHz (Balanced)</option>
+            <option value="1">1 MHz (Longest Range)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_chan_select">Center Frequency &amp; Channel</label>
+          <select id="halow_ap_chan_select">
+            <option value="">Loading channels…</option>
+          </select>
+          <input type="hidden" id="halow_ap_op_class" value="3">
+          <input type="hidden" id="halow_ap_chan_num" value="1">
+          <p class="hint">
+            Selecting bandwidth gates the available legal US channels (902–928 MHz).
+          </p>
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_max_stas">Max Connected Nodes</label>
+          <input type="number" id="halow_ap_max_stas" min="0" max="20" placeholder="0 = default (4)">
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_ip">Relay AP IP</label>
+          <input type="text" id="halow_ap_ip" placeholder="172.16.60.1">
+        </div>
+        <div class="form-group">
+          <label for="halow_ap_netmask">Relay Subnet Mask</label>
+          <input type="text" id="halow_ap_netmask" placeholder="255.255.255.0">
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- TAB 3: SERVICES & ATAK -->
+  <section id="tab-services" class="tab-pane" role="tabpanel">
+
+    <!-- Node Identity -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Node Identification</span>
+      </div>
+      <div class="form-group">
+        <label for="node_id">Node Name / Callsign</label>
+        <input type="text" id="node_id" maxlength="32" autocomplete="off" placeholder="e.g. xiao-gw-alpha">
+        <p class="hint">Displayed in network scans, logs, and mesh management consoles.</p>
+      </div>
+    </div>
+
+    <!-- ATAK CoT Relay -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">ATAK Cursor-on-Target (CoT) Relay</span>
+        <span class="badge badge-accent">UDP Multicast</span>
+      </div>
+      <p class="hint" style="margin-bottom: 0.75rem;">
+        Bi-directional bridge forwarding ATAK situational awareness multicast packets between the local SoftAP subnet and the HaLow mesh uplink with hardware loop suppression.
+      </p>
+      <div class="form-group">
+        <label for="cot_group">Multicast IP Group</label>
+        <input type="text" id="cot_group" maxlength="15" autocomplete="off" placeholder="239.2.3.1">
+      </div>
+      <div class="form-group">
+        <label for="cot_port">Multicast Port</label>
+        <input type="number" id="cot_port" min="1" max="65535" placeholder="6969">
+      </div>
+    </div>
+
+  </section>
+
+  <!-- TAB 4: LIVE TERMINAL LOGS -->
+  <section id="tab-log" class="tab-pane" role="tabpanel">
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Live Device Serial Ring</span>
+        <span class="badge badge-muted">RAM Buffer</span>
+      </div>
+      <div class="log-toolbar">
+        <div style="display:flex; gap:0.4rem;">
+          <button type="button" class="btn-secondary btn-sm" id="logBtn">Refresh Log</button>
+          <button type="button" class="btn-secondary btn-sm" id="logAutoBtn">Auto-refresh: off</button>
+        </div>
+        <button type="button" class="btn-secondary btn-sm" id="copyLogBtn">Copy Log</button>
+      </div>
+      <pre id="logView" class="logview" aria-live="polite">Click "Refresh Log" to load buffered messages.</pre>
+    </div>
+  </section>
+
 </form>
 
-<h2>Device log</h2>
-<div class="panel">
-  <p class="hint">
-    The most recent log output, held in RAM. This is what the serial console would
-    have shown &mdash; useful when the node is somewhere a cable isn't.
-  </p>
-  <div class="actions">
-    <button type="button" class="secondary" id="logBtn">Load log</button>
-    <button type="button" class="secondary" id="logAutoBtn">Auto-refresh: off</button>
+<!-- Docked Bottom Action Bar -->
+<aside class="docked-action-bar" aria-label="Configuration actions">
+  <div class="action-bar-inner">
+    <div class="action-bar-status" id="actionBarStatus">Ready</div>
+    <div class="action-bar-btns">
+      <button type="button" class="btn-secondary" id="rebootBtn">Reboot</button>
+      <button type="button" class="btn-primary" id="saveBtn">Save Config</button>
+    </div>
   </div>
-  <pre id="logView" class="logview" aria-live="polite"></pre>
-</div>
+</aside>
 
 <div id="status" role="status" aria-live="polite"></div>
 
@@ -507,15 +930,18 @@
 'use strict';
 
 var statusTimer = null;
+var scanning = false;
+var logTimer = null;
 
 function el(id) { return document.getElementById(id); }
 
 function showStatus(msg, ok) {
   var s = el('status');
+  var bar = el('actionBarStatus');
   s.textContent = msg;
   s.className = ok ? 'ok' : 'err';
+  if (bar) bar.textContent = msg;
   clearTimeout(showStatus._t);
-  // Errors stay put; successes clear themselves.
   if (ok) showStatus._t = setTimeout(function () { s.className = ''; }, 4000);
 }
 
@@ -530,15 +956,72 @@ function fmtUptime(sec) {
 }
 
 function setDot(id, up) {
-  el(id).className = 'dot ' + (up ? 'up' : 'down');
+  var d = el(id);
+  if (d) d.className = 'dot ' + (up ? 'up' : 'down');
 }
 
-// esp_http_server handles requests on a single task, so a scan (which blocks
-// for several seconds) stalls every other request behind it. Without this
-// guard the status poll times out mid-scan and the panel flashes
-// "unreachable" — alarming, and wrong, at exactly the moment someone is
-// trying to diagnose a link.
-var scanning = false;
+function updateRssiMeter(rssi) {
+  var meter = el('stRssiMeter');
+  if (!meter) return;
+  meter.className = 'signal-meter';
+  if (typeof rssi !== 'number' || rssi === -999) return;
+  if (rssi >= -65) meter.classList.add('level-4');
+  else if (rssi >= -75) meter.classList.add('level-3');
+  else if (rssi >= -85) meter.classList.add('level-2');
+  else meter.classList.add('level-1');
+}
+
+// Tab Switching
+document.querySelectorAll('.tab-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.tab-btn').forEach(function(b) {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+    });
+    document.querySelectorAll('.tab-pane').forEach(function(p) {
+      p.classList.remove('active');
+    });
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    var pane = el(btn.dataset.tab);
+    if (pane) pane.classList.add('active');
+
+    // Auto load log if switching to log tab
+    if (btn.dataset.tab === 'tab-log') {
+      loadLog();
+    }
+  });
+});
+
+// Role Switcher Cards
+function setRole(role) {
+  el('node_role').value = role;
+  if (role === 'relay') {
+    el('roleCardRelay').classList.add('selected');
+    el('roleCardClient').classList.remove('selected');
+    el('clientFields').hidden = true;
+    el('relayFields').hidden = false;
+    el('hdrRoleBadge').textContent = 'Relay Bridge';
+    el('stUplinkType').textContent = 'Wi-Fi STA (To Pi)';
+    el('stApType').textContent = 'HaLow AP (To Leaves)';
+  } else {
+    el('roleCardClient').classList.add('selected');
+    el('roleCardRelay').classList.remove('selected');
+    el('clientFields').hidden = false;
+    el('relayFields').hidden = true;
+    el('hdrRoleBadge').textContent = 'Client Node';
+    el('stUplinkType').textContent = 'HaLow STA (US)';
+    el('stApType').textContent = '2.4GHz SoftAP';
+  }
+}
+
+el('roleCardClient').addEventListener('click', function() { setRole('client'); });
+el('roleCardRelay').addEventListener('click', function() { setRole('relay'); });
+
+// Static IP checkbox toggle
+el('uplink_use_static_ip').addEventListener('change', function() {
+  el('staticIpFields').style.display = this.checked ? 'block' : 'none';
+});
 
 async function loadStatus() {
   if (scanning) return;
@@ -547,36 +1030,35 @@ async function loadStatus() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var s = await res.json();
 
-    el('hdrNode').textContent = s.node_id || '';
+    el('hdrNode').textContent = s.node_id || 'xiao-gw';
 
     var u = s.uplink || {};
     var up = !!u.connected;
     setDot('dotUplink', up);
-    // The firmware's own state name, not a boolean: "searching" vs
-    // "associated, no lease" are different problems with different fixes, and
-    // that distinction is the whole point of showing it here.
     el('stUplink').textContent = u.state || (up ? 'Connected' : 'Down');
-    // `configured` is false only on a node nobody has provisioned yet. Treat a
-    // missing field as configured, so an older firmware doesn't show the
-    // setup banner permanently.
     el('setupBanner').hidden = (u.configured !== false);
-    el('stRssi').textContent = (typeof u.rssi === 'number') ? (u.rssi + ' dBm') : '—';
+    
+    var rssiVal = (typeof u.rssi === 'number') ? (u.rssi + ' dBm') : '—';
+    el('stRssi').textContent = rssiVal;
+    updateRssiMeter(u.rssi);
+
     el('stUplinkIp').textContent = u.ip || 'no lease';
-    el('stApIp').textContent = (s.softap && s.softap.ip) || '—';
+    el('stApIp').textContent = (s.softap && s.softap.ip) || (s.halow_ap && s.halow_ap.ip) || '—';
 
     var c = s.softap ? s.softap.clients : -1;
-    el('stClients').textContent = (c < 0) ? 'n/a' : String(c);
+    el('stClients').textContent = (c < 0) ? 'n/a' : (String(c) + ' device' + (c === 1 ? '' : 's'));
 
     var cot = !!(s.cot && s.cot.running);
     setDot('dotCot', cot);
-    // The relay only starts once the uplink has a lease, so "waiting" is a
-    // normal early-boot state rather than a fault.
     el('stCot').textContent = cot ? (s.cot.group + ':' + s.cot.port) : (up ? 'Stopped' : 'Waiting');
 
     if (s.system) {
       el('stUptime').textContent = fmtUptime(s.system.uptime_s);
       el('stHeap').textContent = Math.round(s.system.heap_free / 1024) + ' KB';
-      el('stRegion').textContent = (s.system.country || '??') + ' / ' + (s.system.partition || '?');
+      el('stVersion').textContent = s.system.version ? ('v' + s.system.version) : '—';
+      el('hdrVerBadge').textContent = s.system.version ? ('v' + s.system.version.substring(0, 7)) : 'v—';
+      el('stPartition').textContent = s.system.partition || 'ota_0';
+      el('stRegionDomain').textContent = (s.system.country || 'US') + ' (902-928MHz)';
     }
   } catch (e) {
     setDot('dotUplink', false);
@@ -585,14 +1067,129 @@ async function loadStatus() {
   }
 }
 
-function applyRoleVisibility(role) {
-  el('clientFields').hidden = (role === 'relay');
-  el('relayFields').hidden = (role !== 'relay');
+var DEFAULT_US_CHANNELS = [
+  { op_class: 3, chan_num: 1, freq_hz: 904000000, bw_mhz: 4 },
+  { op_class: 3, chan_num: 2, freq_hz: 908000000, bw_mhz: 4 },
+  { op_class: 3, chan_num: 3, freq_hz: 912000000, bw_mhz: 4 },
+  { op_class: 3, chan_num: 4, freq_hz: 916000000, bw_mhz: 4 },
+  { op_class: 3, chan_num: 5, freq_hz: 920000000, bw_mhz: 4 },
+  { op_class: 3, chan_num: 6, freq_hz: 924000000, bw_mhz: 4 },
+  { op_class: 4, chan_num: 1, freq_hz: 906000000, bw_mhz: 8 },
+  { op_class: 4, chan_num: 2, freq_hz: 914000000, bw_mhz: 8 },
+  { op_class: 4, chan_num: 3, freq_hz: 922000000, bw_mhz: 8 },
+  { op_class: 2, chan_num: 1, freq_hz: 903000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 2, freq_hz: 905000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 3, freq_hz: 907000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 4, freq_hz: 909000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 5, freq_hz: 911000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 6, freq_hz: 913000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 7, freq_hz: 915000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 8, freq_hz: 917000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 9, freq_hz: 919000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 10, freq_hz: 921000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 11, freq_hz: 923000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 12, freq_hz: 925000000, bw_mhz: 2 },
+  { op_class: 2, chan_num: 13, freq_hz: 927000000, bw_mhz: 2 },
+  { op_class: 1, chan_num: 1, freq_hz: 902500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 2, freq_hz: 903500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 3, freq_hz: 904500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 4, freq_hz: 905500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 5, freq_hz: 906500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 6, freq_hz: 907500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 7, freq_hz: 908500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 8, freq_hz: 909500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 9, freq_hz: 910500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 10, freq_hz: 911500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 11, freq_hz: 912500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 12, freq_hz: 913500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 13, freq_hz: 914500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 14, freq_hz: 915500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 15, freq_hz: 916500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 16, freq_hz: 917500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 17, freq_hz: 918500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 18, freq_hz: 919500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 19, freq_hz: 920500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 20, freq_hz: 921500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 21, freq_hz: 922500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 22, freq_hz: 923500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 23, freq_hz: 924500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 24, freq_hz: 925500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 25, freq_hz: 926500000, bw_mhz: 1 },
+  { op_class: 1, chan_num: 26, freq_hz: 927500000, bw_mhz: 1 }
+];
+
+var activeChannelsList = DEFAULT_US_CHANNELS;
+
+function updateChannelsForBw(bwMhz, targetOpClass, targetChanNum) {
+  var chanSel = el('halow_ap_chan_select');
+  if (!chanSel) return;
+  var bw = parseInt(bwMhz, 10) || 4;
+  var filtered = activeChannelsList.filter(function(c) { return c.bw_mhz === bw; });
+  
+  chanSel.innerHTML = '';
+  filtered.forEach(function(c) {
+    var opt = document.createElement('option');
+    opt.value = c.op_class + '_' + c.chan_num;
+    var freqMhz = (c.freq_hz / 1000000).toFixed(1);
+    opt.textContent = freqMhz + ' MHz  (Channel ' + c.chan_num + ' · OpClass ' + c.op_class + ')';
+    chanSel.appendChild(opt);
+  });
+
+  var targetVal = (targetOpClass && targetChanNum) ? (targetOpClass + '_' + targetChanNum) : '';
+  if (targetVal && filtered.some(function(c) { return (c.op_class + '_' + c.chan_num) === targetVal; })) {
+    chanSel.value = targetVal;
+    el('halow_ap_op_class').value = String(targetOpClass);
+    el('halow_ap_chan_num').value = String(targetChanNum);
+  } else if (filtered.length > 0) {
+    chanSel.value = filtered[0].op_class + '_' + filtered[0].chan_num;
+    el('halow_ap_op_class').value = String(filtered[0].op_class);
+    el('halow_ap_chan_num').value = String(filtered[0].chan_num);
+  }
 }
 
-el('node_role').addEventListener('change', function () {
-  applyRoleVisibility(this.value);
+el('halow_ap_bw_select').addEventListener('change', function() {
+  updateChannelsForBw(this.value);
 });
+
+el('halow_ap_chan_select').addEventListener('change', function() {
+  var parts = this.value.split('_');
+  if (parts.length === 2) {
+    el('halow_ap_op_class').value = parts[0];
+    el('halow_ap_chan_num').value = parts[1];
+  }
+});
+
+function syncSelectedChannel(opClass, chanNum) {
+  var match = activeChannelsList.find(function(c) {
+    return c.op_class === opClass && c.chan_num === chanNum;
+  });
+  if (match) {
+    el('halow_ap_bw_select').value = String(match.bw_mhz);
+    updateChannelsForBw(match.bw_mhz, opClass, chanNum);
+  } else {
+    el('halow_ap_bw_select').value = '4';
+    updateChannelsForBw(4, 3, 1);
+  }
+}
+
+async function initChannelList() {
+  updateChannelsForBw(el('halow_ap_bw_select').value || 4);
+  try {
+    var res = await fetch('/api/channels', { cache: 'no-store' });
+    if (res.ok) {
+      var data = await res.json();
+      if (data && Array.isArray(data.channels) && data.channels.length > 0) {
+        activeChannelsList = data.channels;
+        var curBw = el('halow_ap_bw_select').value;
+        var curOp = parseInt(el('halow_ap_op_class').value, 10);
+        var curChan = parseInt(el('halow_ap_chan_num').value, 10);
+        updateChannelsForBw(curBw, curOp, curChan);
+      }
+    }
+  } catch (e) {
+    /* default table used */
+  }
+}
 
 async function loadConfig() {
   try {
@@ -600,12 +1197,13 @@ async function loadConfig() {
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var cfg = await res.json();
     el('node_id').value = cfg.node_id || '';
-    el('node_role').value = cfg.role || 'client';
-    applyRoleVisibility(cfg.role || 'client');
+    setRole(cfg.role || 'client');
 
     el('uplink_ssid').value = (cfg.uplink && cfg.uplink.ssid) || '';
     el('uplink_security').value = (cfg.uplink && cfg.uplink.security) || 'open';
-    el('uplink_use_static_ip').checked = !!(cfg.uplink && cfg.uplink.use_static_ip);
+    var staticChecked = !!(cfg.uplink && cfg.uplink.use_static_ip);
+    el('uplink_use_static_ip').checked = staticChecked;
+    el('staticIpFields').style.display = staticChecked ? 'block' : 'none';
     el('uplink_static_ip').value = (cfg.uplink && cfg.uplink.static_ip) || '';
     el('uplink_static_gateway').value = (cfg.uplink && cfg.uplink.static_gateway) || '';
     el('uplink_static_netmask').value = (cfg.uplink && cfg.uplink.static_netmask) || '';
@@ -617,8 +1215,11 @@ async function loadConfig() {
 
     el('halow_ap_ssid').value = (cfg.halow_ap && cfg.halow_ap.ssid) || '';
     el('halow_ap_security').value = (cfg.halow_ap && cfg.halow_ap.security) || 'sae';
-    el('halow_ap_op_class').value = (cfg.halow_ap && cfg.halow_ap.op_class) || '';
-    el('halow_ap_chan_num').value = (cfg.halow_ap && cfg.halow_ap.s1g_chan_num) || '';
+    if (cfg.halow_ap && cfg.halow_ap.op_class && cfg.halow_ap.s1g_chan_num) {
+      syncSelectedChannel(cfg.halow_ap.op_class, cfg.halow_ap.s1g_chan_num);
+    } else {
+      syncSelectedChannel(4, 1);
+    }
     el('halow_ap_max_stas').value = (cfg.halow_ap && cfg.halow_ap.max_stas) || '';
     el('halow_ap_ip').value = (cfg.halow_ap && cfg.halow_ap.ip) || '';
     el('halow_ap_netmask').value = (cfg.halow_ap && cfg.halow_ap.netmask) || '';
@@ -626,29 +1227,48 @@ async function loadConfig() {
     el('cot_group').value = (cfg.cot && cfg.cot.group) || '239.2.3.1';
     el('cot_port').value = (cfg.cot && cfg.cot.port) || 6969;
   } catch (e) {
-    showStatus('Failed to load current config: ' + e.message, false);
+    showStatus('Failed to load config: ' + e.message, false);
   }
 }
 
-el('cfgForm').addEventListener('submit', async function (ev) {
-  ev.preventDefault();
+async function saveConfig() {
   var btn = el('saveBtn');
   btn.disabled = true;
+  btn.textContent = 'Saving…';
   var body = {
     node_id: el('node_id').value,
+    role: el('node_role').value,
     uplink: {
       ssid: el('uplink_ssid').value,
       security: el('uplink_security').value,
-      psk: el('uplink_psk').value
+      psk: el('uplink_psk').value,
+      use_static_ip: el('uplink_use_static_ip').checked,
+      static_ip: el('uplink_static_ip').value,
+      static_gateway: el('uplink_static_gateway').value,
+      static_netmask: el('uplink_static_netmask').value
     },
     softap: {
       ssid: el('softap_ssid').value,
       psk: el('softap_psk').value,
-      channel: parseInt(el('softap_channel').value, 10)
+      channel: parseInt(el('softap_channel').value, 10) || 6
+    },
+    wifi_uplink: {
+      ssid: el('wifi_uplink_ssid').value,
+      psk: el('wifi_uplink_psk').value
+    },
+    halow_ap: {
+      ssid: el('halow_ap_ssid').value,
+      security: el('halow_ap_security').value,
+      psk: el('halow_ap_psk').value,
+      op_class: parseInt(el('halow_ap_op_class').value, 10) || 4,
+      s1g_chan_num: parseInt(el('halow_ap_chan_num').value, 10) || 1,
+      max_stas: parseInt(el('halow_ap_max_stas').value, 10) || 0,
+      ip: el('halow_ap_ip').value,
+      netmask: el('halow_ap_netmask').value
     },
     cot: {
       group: el('cot_group').value,
-      port: parseInt(el('cot_port').value, 10)
+      port: parseInt(el('cot_port').value, 10) || 6969
     }
   };
   try {
@@ -658,12 +1278,12 @@ el('cfgForm').addEventListener('submit', async function (ev) {
       body: JSON.stringify(body)
     });
     if (res.ok) {
-      showStatus('Saved. Reboot to apply.', true);
+      showStatus('Configuration saved. Reboot node to apply.', true);
       el('uplink_psk').value = '';
       el('softap_psk').value = '';
+      el('wifi_uplink_psk').value = '';
+      el('halow_ap_psk').value = '';
     } else {
-      // The firmware sends a specific reason (provisioning_validate); show it
-      // rather than a generic failure.
       var text = await res.text().catch(function () { return ''; });
       showStatus(text ? text.replace(/<[^>]*>/g, '').trim() : 'Save failed (' + res.status + ')', false);
     }
@@ -671,30 +1291,28 @@ el('cfgForm').addEventListener('submit', async function (ev) {
     showStatus('Save failed: ' + e.message, false);
   } finally {
     btn.disabled = false;
+    btn.textContent = 'Save Config';
   }
-});
+}
+
+el('saveBtn').addEventListener('click', saveConfig);
+el('cfgForm').addEventListener('submit', function(ev) { ev.preventDefault(); saveConfig(); });
 
 el('rebootBtn').addEventListener('click', async function () {
-  if (!confirm('Reboot the gateway now? Local Wi-Fi will drop for a few seconds.')) return;
-  showStatus('Rebooting…', true);
+  if (!confirm('Reboot the gateway now? Local Wi-Fi will drop for ~5 seconds.')) return;
+  showStatus('Rebooting node…', true);
   clearInterval(statusTimer);
   try {
-    // The Content-Type header is required by the firmware's CSRF guard
-    // (reject_if_not_json in web_ui.c) even though the body is empty.
     await fetch('/api/reboot', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
   } catch (e) {
-    /* connection drops as the device reboots - expected */
+    /* expected disconnect */
   }
-  // Poll until it answers again, so the page recovers on its own.
   setTimeout(function () {
     statusTimer = setInterval(loadStatus, 2000);
-  }, 3000);
+  }, 3500);
 });
 
-// --- HaLow scan -------------------------------------------------------------
-// Answers "is the Pi's AP visible at all?" from the device itself. Results are
-// clickable so a correct SSID can be adopted without retyping it - which also
-// removes a whole class of "it's a typo" bring-up dead ends.
+// HaLow Scanner
 el('scanBtn').addEventListener('click', async function () {
   var btn = el('scanBtn');
   var out = el('scanResults');
@@ -703,7 +1321,6 @@ el('scanBtn').addEventListener('click', async function () {
   out.innerHTML = '';
   scanning = true;
   try {
-    // Content-Type required by the firmware's CSRF guard despite the empty body.
     var res = await fetch('/api/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
     if (!res.ok) {
       var text = await res.text().catch(function () { return ''; });
@@ -712,17 +1329,10 @@ el('scanBtn').addEventListener('click', async function () {
     var data = await res.json();
     var aps = data.aps || [];
     if (!aps.length) {
-      out.innerHTML = '';
-      var p = document.createElement('p');
-      p.className = 'hint';
-      p.textContent = 'No APs found in region ' + (data.country || '??') +
-        '. If the Pi runs a different regulatory domain, its channels were not scanned — ' +
-        'this board is 902–928 MHz only, so the Pi has to be on the same domain ' +
-        'before concluding the AP is down.';
-      out.appendChild(p);
+      out.innerHTML = '<p class="hint" style="color:var(--color-warn);">No HaLow APs found in region ' +
+        (data.country || 'US') + '. Ensure the mesh Pi HaLow AP is configured for US (902–928 MHz).</p>';
       return;
     }
-    // Strongest first: the one you want is almost always the loudest.
     aps.sort(function (a, b) { return (b.rssi || -999) - (a.rssi || -999); });
 
     var table = document.createElement('table');
@@ -740,9 +1350,7 @@ el('scanBtn').addEventListener('click', async function () {
     var tbody = document.createElement('tbody');
     aps.forEach(function (ap) {
       var tr = document.createElement('tr');
-      tr.title = 'Use this SSID';
-      // textContent throughout: SSIDs are attacker-controllable strings from
-      // the air, and must never reach innerHTML.
+      tr.title = 'Click to use this SSID';
       var cells = [
         [ap.ssid || '(hidden)', ''],
         [ap.bssid || '', 'num'],
@@ -759,21 +1367,14 @@ el('scanBtn').addEventListener('click', async function () {
       tr.addEventListener('click', function () {
         if (!ap.ssid) return;
         el('uplink_ssid').value = ap.ssid;
-        showStatus('SSID set to "' + ap.ssid + '" — set security and save.', true);
+        showStatus('SSID set to "' + ap.ssid + '" — select security and save.', true);
       });
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
     out.appendChild(table);
-
-    if (data.complete === false) {
-      var warn = document.createElement('p');
-      warn.className = 'hint';
-      warn.textContent = 'Scan timed out — these results may be incomplete.';
-      out.appendChild(warn);
-    }
   } catch (e) {
-    showStatus('Scan failed: ' + e.message, false);
+    showStatus('Scan error: ' + e.message, false);
   } finally {
     scanning = false;
     btn.disabled = false;
@@ -781,16 +1382,12 @@ el('scanBtn').addEventListener('click', async function () {
   }
 });
 
-// --- Device log -------------------------------------------------------------
-var logTimer = null;
-
+// Log Viewer
 async function loadLog() {
   try {
     var res = await fetch('/api/log', { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     var view = el('logView');
-    // Only stick to the bottom if the reader was already there - otherwise
-    // auto-refresh would yank the view away mid-read.
     var atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 40;
     view.textContent = await res.text();
     if (atBottom) view.scrollTop = view.scrollHeight;
@@ -813,9 +1410,28 @@ el('logAutoBtn').addEventListener('click', function () {
   }
 });
 
+el('copyLogBtn').addEventListener('click', function() {
+  var logText = el('logView').textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(logText).then(function() {
+      showStatus('Log copied to clipboard', true);
+    });
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = logText;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showStatus('Log copied to clipboard', true);
+  }
+});
+
+initChannelList();
 loadConfig();
 loadStatus();
 statusTimer = setInterval(loadStatus, 5000);
 </script>
+
 </body>
 </html>

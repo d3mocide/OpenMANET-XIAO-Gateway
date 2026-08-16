@@ -718,6 +718,52 @@ static esp_err_t scan_post_handler(httpd_req_t *req)
     return err;
 }
 
+static void channel_collect_cb(const halow_ap_channel_t *chan, void *ctx)
+{
+    cJSON *array = (cJSON *)ctx;
+    cJSON *item = cJSON_CreateObject();
+    if (item == NULL) {
+        return;
+    }
+    cJSON_AddNumberToObject(item, "op_class", chan->op_class);
+    cJSON_AddNumberToObject(item, "chan_num", chan->s1g_chan_num);
+    cJSON_AddNumberToObject(item, "freq_hz", chan->freq_hz);
+    cJSON_AddNumberToObject(item, "bw_mhz", chan->bw_mhz);
+    cJSON_AddItemToArray(array, item);
+}
+
+/* Returns the list of legal (op_class, s1g_chan_num) channels for this build's
+ * regulatory domain (US 902-928MHz) so the web UI can populate channel dropdowns. */
+static esp_err_t channels_get_handler(httpd_req_t *req)
+{
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *array = root ? cJSON_AddArrayToObject(root, "channels") : NULL;
+    if (array == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    cJSON_AddStringToObject(root, "country", CONFIG_HALOW_COUNTRY_CODE);
+    downlink_halow_ap_list_channels(channel_collect_cb, array);
+
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (out == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, out);
+    free(out);
+    return err;
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -775,7 +821,7 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
      * 5s socket timeouts would abort the connection before it can answer. */
     config.recv_wait_timeout = 15;
     config.send_wait_timeout = 15;
-    /* Default is 8 and there are 7 routes below - raised so adding one doesn't
+    /* Default is 8 and there are 8 routes below - raised so adding one doesn't
      * fail registration at runtime instead of at compile time. */
     config.max_uri_handlers = 12;
     /* The status and scan handlers build and print whole cJSON trees on this
@@ -794,6 +840,7 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
     const httpd_uri_t routes[] = {
         { .uri = "/", .method = HTTP_GET, .handler = root_get_handler },
         { .uri = "/api/status", .method = HTTP_GET, .handler = status_get_handler },
+        { .uri = "/api/channels", .method = HTTP_GET, .handler = channels_get_handler },
         { .uri = "/api/config", .method = HTTP_GET, .handler = config_get_handler },
         { .uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/api/log", .method = HTTP_GET, .handler = log_get_handler },

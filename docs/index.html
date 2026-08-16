@@ -142,7 +142,123 @@
 
   .panel strong { color: var(--color-accent); }
 
-  esp-web-install-button { display: block; margin: 1.75rem 0; }
+  /* Version Selector & Tracker HUD Panel */
+  .version-section {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    padding: 1.1rem 1.25rem;
+    margin: 1.5rem 0 1.25rem;
+    border-radius: 3px;
+  }
+  .version-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.6rem;
+  }
+  .version-label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .badge {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.15rem 0.5rem;
+    border-radius: 2px;
+  }
+  .badge-latest {
+    background: rgba(193, 102, 45, 0.15);
+    color: var(--color-accent);
+    border: 1px solid var(--color-accent);
+  }
+  .badge-history {
+    background: rgba(92, 101, 112, 0.15);
+    color: var(--color-muted);
+    border: 1px solid var(--color-line);
+  }
+  .select-wrapper {
+    position: relative;
+    margin-bottom: 0.85rem;
+  }
+  select.version-select {
+    width: 100%;
+    padding: 0.65rem 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    border: 1px solid var(--color-line);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  select.version-select:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+  .version-card {
+    background: var(--color-bg);
+    border: 1px solid var(--color-line);
+    padding: 0.85rem 1rem;
+    border-radius: 2px;
+    font-size: 0.85rem;
+  }
+  .vcard-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+    margin-bottom: 0.6rem;
+  }
+  .vcard-row:last-child { margin-bottom: 0; }
+  .vcard-cell { flex: 1 1 10rem; }
+  .vcard-cell.full-width { flex: 1 1 100%; }
+  .vcard-title {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    margin-bottom: 0.2rem;
+  }
+  .vcard-val {
+    color: var(--color-ink);
+    font-weight: 500;
+  }
+  .vcard-val.font-mono {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+  }
+  .vcard-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--color-line);
+    padding-top: 0.55rem;
+    margin-top: 0.6rem;
+    font-size: 0.78rem;
+  }
+  .vcard-meta { color: var(--color-muted); font-family: var(--font-mono); font-size: 0.75rem; }
+  .vcard-link {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    text-decoration: none;
+  }
+  .vcard-link:hover { text-decoration: underline; }
+  .alpha-note {
+    font-size: 0.78rem;
+    color: var(--color-muted);
+    margin: 0.75rem 0 0;
+    line-height: 1.45;
+  }
+
+  esp-web-install-button { display: block; margin: 1.5rem 0; }
 
   .flash-btn {
     display: inline-flex;
@@ -236,7 +352,44 @@
   typed into this page.
 </div>
 
-<esp-web-install-button manifest="manifest.json">
+<div class="version-section">
+  <div class="version-header">
+    <label for="versionSelect" class="version-label">Firmware Build / Version</label>
+    <span id="versionStatusBadge" class="badge badge-latest">Latest Build</span>
+  </div>
+  <div class="select-wrapper">
+    <select id="versionSelect" class="version-select" aria-label="Select firmware version to flash">
+      <option value="manifest.json">Latest Build (manifest.json)</option>
+    </select>
+  </div>
+  <div id="versionCard" class="version-card">
+    <div class="vcard-row">
+      <div class="vcard-cell">
+        <span class="vcard-title">Version / Commit</span>
+        <span id="vcardSha" class="vcard-val font-mono">Latest commit</span>
+      </div>
+      <div class="vcard-cell">
+        <span class="vcard-title">Build Date</span>
+        <span id="vcardDate" class="vcard-val font-mono">Automated CI build</span>
+      </div>
+    </div>
+    <div class="vcard-row">
+      <div class="vcard-cell full-width">
+        <span class="vcard-title">Commit Summary</span>
+        <span id="vcardMsg" class="vcard-val">Main branch firmware</span>
+      </div>
+    </div>
+    <div class="vcard-row vcard-footer">
+      <span class="vcard-meta">Chip: <strong>ESP32-S3</strong> · US Region · Dual-OTA</span>
+      <a id="vcardCommitLink" class="vcard-link" href="https://github.com/d3mocide/OpenMANET-XIAO-Gateway" target="_blank" rel="noopener">Repository &rarr;</a>
+    </div>
+  </div>
+  <p class="alpha-note">
+    <strong>Alpha build retention:</strong> Up to 3 previous builds (<code>n-1</code>, <code>n-2</code>, <code>n-3</code>) are preserved above so you can easily roll back if a recent build has an issue.
+  </p>
+</div>
+
+<esp-web-install-button id="installBtn" manifest="manifest.json">
   <button slot="activate" class="flash-btn">Connect &amp; Flash</button>
   <span slot="unsupported" class="unsupported">
     Your browser doesn't support Web Serial. Use Chrome or Edge on desktop.
@@ -302,6 +455,99 @@
 </p>
 
 <footer>Firmware built automatically from the repository's <code>main</code> branch.</footer>
+
+<script>
+'use strict';
+
+(function() {
+  const repoBaseUrl = 'https://github.com/d3mocide/OpenMANET-XIAO-Gateway';
+  const versionSelect = document.getElementById('versionSelect');
+  const installBtn = document.getElementById('installBtn');
+  const vcardSha = document.getElementById('vcardSha');
+  const vcardDate = document.getElementById('vcardDate');
+  const vcardMsg = document.getElementById('vcardMsg');
+  const vcardCommitLink = document.getElementById('vcardCommitLink');
+  const versionStatusBadge = document.getElementById('versionStatusBadge');
+
+  let availableBuilds = [];
+
+  function updateCard(build) {
+    if (!build) return;
+    vcardSha.textContent = build.version || build.sha || 'latest';
+    vcardDate.textContent = build.displayDate || (build.date ? new Date(build.date).toLocaleString() : 'Automated CI build');
+    vcardMsg.textContent = build.title || build.message || 'Main branch build';
+
+    if (build.sha && build.sha !== 'latest') {
+      vcardCommitLink.href = `${repoBaseUrl}/commit/${build.fullSha || build.sha}`;
+      vcardCommitLink.textContent = `Commit (${build.sha.substring(0, 7)}) \u2192`;
+    } else {
+      vcardCommitLink.href = repoBaseUrl;
+      vcardCommitLink.textContent = 'Repository \u2192';
+    }
+
+    if (build.isLatest) {
+      versionStatusBadge.className = 'badge badge-latest';
+      versionStatusBadge.textContent = 'Latest Build';
+    } else {
+      versionStatusBadge.className = 'badge badge-history';
+      versionStatusBadge.textContent = build.tag || 'Historical Build';
+    }
+
+    const manifestUrl = build.manifest || 'manifest.json';
+    installBtn.setAttribute('manifest', manifestUrl);
+  }
+
+  async function initVersionTracker() {
+    try {
+      const res = await fetch('builds.json', { cache: 'no-store' });
+      if (!res.ok) throw new Error('builds.json not found');
+      const data = await res.json();
+      if (data && Array.isArray(data.builds) && data.builds.length > 0) {
+        availableBuilds = data.builds;
+        versionSelect.innerHTML = '';
+        availableBuilds.forEach((b, idx) => {
+          const opt = document.createElement('option');
+          opt.value = b.manifest || (b.sha ? `builds/${b.sha}/manifest.json` : 'manifest.json');
+          const tagLabel = b.tag ? `[${b.tag}] ` : (idx === 0 ? '[Latest] ' : `[n-${idx}] `);
+          const verLabel = b.version || (b.sha ? b.sha.substring(0, 7) : 'Build');
+          const dateLabel = b.displayDate ? ` (${b.displayDate})` : (b.date ? ` (${b.date.substring(0, 10)})` : '');
+          opt.textContent = `${tagLabel}${verLabel}${dateLabel}`;
+          versionSelect.appendChild(opt);
+        });
+        updateCard(availableBuilds[0]);
+      }
+    } catch (e) {
+      // Fallback if builds.json is unavailable (e.g. running from file:// or single manifest)
+      versionSelect.innerHTML = '<option value="manifest.json">Default Build (manifest.json)</option>';
+      fetch('manifest.json')
+        .then(r => r.json())
+        .then(m => {
+          if (m && m.version) {
+            vcardSha.textContent = m.version;
+            vcardMsg.textContent = m.name || 'XIAO HaLow Gateway';
+            if (/^[0-9a-f]{7,40}$/i.test(m.version)) {
+              vcardCommitLink.href = `${repoBaseUrl}/commit/${m.version}`;
+              vcardCommitLink.textContent = `Commit (${m.version.substring(0, 7)}) \u2192`;
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }
+
+  versionSelect.addEventListener('change', function() {
+    const selectedManifest = this.value;
+    const found = availableBuilds.find(b => (b.manifest === selectedManifest) || (`builds/${b.sha}/manifest.json` === selectedManifest));
+    if (found) {
+      updateCard(found);
+    } else {
+      installBtn.setAttribute('manifest', selectedManifest);
+    }
+  });
+
+  initVersionTracker();
+})();
+</script>
 
 </body>
 </html>
