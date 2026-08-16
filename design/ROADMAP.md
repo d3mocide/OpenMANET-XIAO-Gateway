@@ -217,6 +217,59 @@ The same argument applies to throughput. If TCP-through-NAT disappoints on hardw
 measure first. The MM6108 link over SPI is the ceiling (single-digit Mbps at best, far less at
 range) and the S3's lwIP NAT path handles that with headroom.
 
+### 7. XIAO as a real 802.11s mesh point — *v2 scope, not this gateway's, needs Morse Micro*
+
+Raised 2026-08-16 as a fallback if `PI_SIDE.md` item 0 (getting the Pi to beacon a HaLow AP at all)
+turns out to be a dead end. **This is not a small addition to the current design — it's a separate,
+much larger undertaking**, and most of the hard part isn't ours to build. Two independent gaps stack
+on top of each other:
+
+**Gap 1 — 802.11s mesh association itself.** Read directly from Morse Micro's own source
+(`github.com/MorseMicro/esp-halow`, `github.com/MorseMicro/mm-iot-sdk`, fetched 2026-08-16):
+`esp-halow`'s `hostap` component (`halow/components/hostap/CMakeLists.txt`) vendors a real fork of
+upstream `wpa_supplicant`/`hostapd` (file names match hostap.git exactly), and builds genuine STA
+code plus genuine AP code gated behind `CONFIG_HALOW_AP_MODE` (`hostapd.c`, `beacon.c`,
+`ap_mlme.c`, `ieee802_11_s1g.c`, `NEED_AP_MLME` — the real thing, not a stub; this is what backs
+the AP-mode support `HARDWARE.md` already notes exists on ESP32-C5). **`CONFIG_MESH` is never
+defined and none of `mesh.c`/`mesh_mpm.c`/`mesh_rsn.c` are in the build** — but those exact files
+**do exist**, unused, in the vendored source tree
+(`mm-iot-sdk/framework/src/hostap/wpa_supplicant/mesh*.c`). So the gap isn't "Morse never touched
+mesh code" — it's "the mesh code was vendored along with everything else and never wired into the
+ESP32 build or given a driver to run on."
+  That driver is the real blocker. `drivers_morse.c` registers exactly two `wpa_driver_ops` tables
+  — `mmwlan_wpas_ops` (STA) and `mmwlan_wpas_ops_ap` (AP) — both `extern`, both "implemented by
+  morselib." **`morselib` is Morse Micro's closed-source static library**; nothing in the public
+  repos shows what it actually implements. Whether a hypothetical `mmwlan_wpas_ops_mesh` is
+  feasible depends on primitives (peer-specific keys, self-protected action frames, mesh beaconing)
+  that only Morse Micro can see or add. **We cannot build this ourselves from outside their SDK.**
+  The one strong reason to think it's tractable *for them*: the identical silicon (MM6108, and
+  specifically this project's exact FGH100M-H part) already runs 802.11s mesh point mode today,
+  unmodified, on the Pi side via Linux's `hostapd_s1g`/`wpa_supplicant_s1g` — so this is a host-SDK
+  porting gap, not a chip/RF capability wall. That's the pitch worth taking to Morse Micro: they've
+  already vendored the mesh source and already proved their AP-mode driver ops can do STA/peer
+  management; finishing the mesh port is a bounded ask, not "invent mesh support."
+  (Note: an earlier PI_SIDE.md line reading "ESP32 HaLow cannot do STA-to-STA direct links,
+  confirmed by Morse's own team" predates this finding and its original context wasn't recovered
+  from this repo's history. It may have meant exactly this — not supported *today* — rather than
+  "architecturally impossible." Worth re-asking Morse directly with this level of specificity
+  before assuming it's a closed door.)
+
+**Gap 2 — batman-adv, or an equivalent, doesn't exist for FreeRTOS/lwIP at all.** Even a fully
+working 802.11s mesh association only gets the XIAO to "one MAC-layer peer." OpenMANET's actual
+mesh behaviour — the flat L2 domain, multi-hop routing, loop prevention — comes from batman-adv
+running on top of the 802.11s interfaces (see "Settled decisions" below, already established). That
+is Linux kernel networking code with no FreeRTOS/lwIP counterpart to build from; porting or
+reimplementing it is new work with no existing scaffolding, and plausibly a bigger lift than gap 1.
+Skipping it and just associating at 802.11s without batman-adv is not a safe substitute — a plain
+mesh peer with no OGM exchange sitting next to batman-adv-speaking neighbors is undefined behaviour
+this project has not tested, not a known-working "leaf mesh point" mode.
+
+**Where this leaves the plan**: `PI_SIDE.md` item 0 (a Pi-side AP-mode config test) is orders of
+magnitude cheaper than this and should be exhausted first — it needs no new code anywhere. This item
+is the real fallback, and starts with a conversation with Morse Micro about gap 1, not firmware work
+in this repo. Gap 2 needs a considered scoping pass of its own before any code gets written, even if
+Morse Micro says yes to gap 1.
+
 ## Settled decisions
 
 Recorded so they aren't relitigated, and so they aren't accidentally undone.
