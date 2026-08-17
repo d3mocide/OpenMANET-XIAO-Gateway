@@ -909,6 +909,25 @@
       </div>
       <pre id="logView" class="logview" aria-live="polite">Click "Refresh Log" to load buffered messages.</pre>
     </div>
+
+    <!-- Stack headroom.
+         Lives on the log tab because it answers the same question the log does
+         after an unexplained reboot: "was this a crash, and where?" A stack
+         overflow gives no warning in the log itself - the node simply panics -
+         so this is the only place the warning can appear beforehand. -->
+    <div class="hud-card">
+      <div class="card-header">
+        <span class="card-title">Task Stack Headroom</span>
+        <span class="badge badge-muted">Diagnostic</span>
+      </div>
+      <div class="log-toolbar">
+        <button type="button" class="btn-secondary btn-sm" id="tasksBtn">Check Stacks</button>
+      </div>
+      <div id="tasksOut"></div>
+      <p class="hint">FREE is the least stack this task has ever had spare since boot. It only
+        reflects code paths that have actually run, so check again after the node has been up a
+        while and through a reconnect or two.</p>
+    </div>
   </section>
 
 </form>
@@ -1397,6 +1416,76 @@ async function loadLog() {
 }
 
 el('logBtn').addEventListener('click', loadLog);
+
+// Task stack headroom. Thresholds match cmd_gwcfg_tasks() in provisioning.c -
+// if you change one, change the other, or the console and the web UI will
+// disagree about whether a node is in trouble.
+el('tasksBtn').addEventListener('click', async function () {
+  var out = el('tasksOut');
+  var btn = el('tasksBtn');
+  btn.disabled = true;
+  out.textContent = 'Reading task stacks...';
+  try {
+    var res = await fetch('/api/tasks', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    var tasks = (await res.json()).tasks || [];
+    out.textContent = '';
+
+    var table = document.createElement('table');
+    table.className = 'scan-table';
+    var thead = document.createElement('thead');
+    var hrow = document.createElement('tr');
+    ['Task', 'Stack', 'Free', 'Used'].forEach(function (h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      hrow.appendChild(th);
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    var worst = null;
+    tasks.forEach(function (t) {
+      var tr = document.createElement('tr');
+      var cells;
+      if (!t.present) {
+        tr.style.opacity = '0.5';
+        cells = [[t.name, ''], [t.stack + ' B', 'num'], ['—', 'num'], ['not running', 'num']];
+      } else {
+        // Round up, so a task that has touched any stack at all never shows 0%.
+        var pct = t.stack ? Math.ceil((t.stack - t.free) * 100 / t.stack) : 0;
+        if (worst === null || t.free < worst.free) worst = t;
+        // Theme variables, not literals: the page has light and dark palettes
+        // and a hardcoded colour is unreadable in one of them.
+        if (t.free < 256) tr.style.color = 'var(--color-warn)';
+        else if (t.free < 512) tr.style.color = 'var(--color-accent)';
+        cells = [[t.name, ''], [t.stack + ' B', 'num'], [t.free + ' B', 'num'], [pct + '%', 'num']];
+      }
+      cells.forEach(function (c) {
+        var td = document.createElement('td');
+        td.textContent = c[0];
+        if (c[1]) td.className = c[1];
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    out.appendChild(table);
+
+    if (worst && worst.free < 256) {
+      showStatus('"' + worst.name + '" has only ' + worst.free + ' bytes of stack left — it will overflow.', false);
+    } else if (worst && worst.free < 512) {
+      showStatus('"' + worst.name + '" is down to ' + worst.free + ' bytes of stack.', false);
+    } else if (worst) {
+      showStatus('Stacks OK — tightest is "' + worst.name + '" with ' + worst.free + ' bytes free.', true);
+    }
+  } catch (e) {
+    out.textContent = '';
+    showStatus('Could not read task stacks: ' + e.message, false);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 el('logAutoBtn').addEventListener('click', function () {
   if (logTimer) {

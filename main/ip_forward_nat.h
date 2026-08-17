@@ -24,6 +24,12 @@ extern "C" {
  * Steps 2 and 3 alone produce a gateway where raw IP works and every hostname
  * lookup fails - which presents as "NAT is broken".
  *
+ * Step 1 is skipped when the downlink netif runs no DHCP server, which is the
+ * case in GW_ROLE_RELAY (the HaLow netif is DHCP-client shaped and leaf nodes
+ * are statically addressed). That is not the degraded case described above -
+ * there is simply no DHCP offer to attach a DNS option to. Steps 2 and 3 are
+ * unconditional.
+ *
  * NAPT is enabled on the *downlink* (SoftAP) netif and the *uplink* netif is
  * made the default route. That direction is deliberate and matches ESP-IDF's
  * own softap_sta NAT-router example: esp_netif's NAPT control sets the napt

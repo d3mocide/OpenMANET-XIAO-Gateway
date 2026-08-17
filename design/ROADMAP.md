@@ -6,7 +6,7 @@ you're picking the project back up.**
 - Companion docs: [`HARDWARE.md`](HARDWARE.md) (what to buy, how to build one, how to bring it up),
   [`PI_SIDE.md`](PI_SIDE.md) (the other end of the link)
 - Architecture diagram and repo layout: [`../README.md`](../README.md)
-- **Last updated:** 2026-08-16
+- **Last updated:** 2026-08-17
 
 Keep this file current: tick the checklist when a step passes, move an item out of "not built yet"
 when it lands, and add to "settled decisions" rather than re-arguing one. Historical detail
@@ -19,8 +19,8 @@ FGH100M-H — 902–928 MHz, US only.** One build, `CONFIG_HALOW_COUNTRY_CODE="U
 decisions" and [`HARDWARE.md`](HARDWARE.md) "Regulatory domain".
 
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
-component: **zero errors, zero warnings**, binary ~1.89 MB, **37% free** in the 3 MB app
-slot on confirmed 8 MB flash (down from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the
+component: **zero errors, zero warnings**, binary ~1.92 MB (`0x1eabb0`), **36% free** in the 3 MB
+app slot on confirmed 8 MB flash (down from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the
 GW_ROLE_RELAY code below - see item 8). Verified by actually running the build, not by reading
 code.
 
@@ -54,6 +54,13 @@ All three were found by checking this firmware's assumptions against upstream ES
 not by re-reading this repo. Assume the same class of error exists elsewhere. See
 [`../CLAUDE.md`](../CLAUDE.md) for the working rule this produced.
 
+**A fourth was found only by running it** (2026-08-17, item 8): the datapath bring-up was correct
+against every API it called, and still crashed — because of *where* it ran, not what it did. Called
+from an uplink state callback, it executed on the `sys_evt` event-loop task and overflowed that
+task's 2816-byte stack, panicking the node into a reboot loop. Reading the call site tells you
+nothing here; the bug lives in the execution context the call site inherits. When adding work to any
+callback, check which task will run it and what stack that task has.
+
 ## What's implemented
 
 | Module | File | Status |
@@ -65,9 +72,10 @@ not by re-reading this repo. Assume the same class of error exists elsewhere. Se
 | NAT / IP forwarding | `main/ip_forward_nat.c` | All three steps of ESP-IDF's NAT recipe: DNS propagation into the SoftAP's DHCP offers, uplink as default route, NAPT on the downlink. |
 | CoT multicast relay | `main/cot_relay.c` | One socket joined to 239.2.3.1:6969 on both netifs, `IP_PKTINFO`/`recvmsg()` for arrival interface, loop prevention via `IP_MULTICAST_LOOP` off + own-source drop. |
 | Provisioning | `main/provisioning.c` | NVS config blob (magic + version stamped, validated on load and save) plus `gwcfg-*` console commands over USB Serial/JTAG. `gwcfg-set-role` selects GW_ROLE_CLIENT/GW_ROLE_RELAY at runtime - one firmware image, no separate relay build. |
-| Web config UI | `main/web_ui.c` / `.html` | `esp_http_server` + embedded HTML. `GET /api/status`, `GET`/`POST /api/config`, `GET /api/log`, `POST /api/scan`, `POST /api/reboot`. Same NVS config as the console. SoftAP clients only; **no authentication yet**. |
+| Web config UI | `main/web_ui.c` / `.html` | `esp_http_server` + embedded HTML. `GET /api/status`, `GET`/`POST /api/config`, `GET /api/log`, `GET /api/tasks`, `POST /api/scan`, `POST /api/reboot`. Same NVS config as the console. SoftAP clients only; **no authentication yet**. |
 | Status LED | `main/status_led.c` | On-board GPIO21 LED blinks the uplink link state. The only instrument needing neither cable nor phone. |
 | Factory reset | `main/factory_reset.c` | 5 s BOOT-button hold restores defaults and reboots; LED acknowledges at 1.5 s. |
+| Stack headroom | `main/task_stats.c` | Worst-case free stack per task via `uxTaskGetStackHighWaterMark()`, surfaced as `gwcfg-tasks` and `GET /api/tasks`. Turns "is this close to overflowing?" into a number - see "Stack budgets" below. |
 | Log ring buffer | `main/log_buffer.c` | `esp_log_set_vprintf` tee into a 6 KB RAM ring, served at `/api/log`. Chains to the previous handler, so serial output is unaffected. |
 | App wiring | `main/app_main.c` | Brings up log buffer, LED, factory-reset watcher, console and web UI immediately; then one of two role-specific bring-up paths (`bring_up_client_role()` / `bring_up_relay_role()`). NAT + CoT relay come up via a shared helper once whichever uplink holds a usable IP, retrying on the next reconnect if that fails. |
 | Web flasher + CI | `docs/`, `.github/workflows/` | ESP Web Tools page, single US build. GitHub Actions builds `sdkconfig.defaults` unmodified and deploys to Pages; PRs build but don't deploy. |
@@ -274,7 +282,7 @@ is the real fallback, and starts with a conversation with Morse Micro about gap 
 in this repo. Gap 2 needs a considered scoping pass of its own before any code gets written, even if
 Morse Micro says yes to gap 1.
 
-### 8. GW_ROLE_RELAY — built 2026-08-16, `idf.py build` verified, **untested on real hardware**
+### 8. GW_ROLE_RELAY — built 2026-08-16, first hardware run 2026-08-17, **partially confirmed**
 
 Fallback for the worst case on both item 0 (Pi has no HaLow AP mode) and item 7 (Morse Micro won't
 add mesh support): route around HaLow entirely for the Pi-facing hop, using only things already
@@ -328,8 +336,50 @@ real hardware. Procedure and pass/fail criteria for each is in
       `main/downlink_halow_ap.h`) actually pass traffic once associated?
 - [ ] **Tier 2** - the full chain against *any* ordinary Wi-Fi network on the relay's uplink side
       (still no Pi needed) - first real-hardware run of the NAT/DNS/CoT-relay pipeline at all.
+      **Attempted 2026-08-17 against an ordinary WPA3-SAE home AP.** The uplink half passed and the
+      datapath half found a bug; both are recorded under "What the first relay run proved" below.
 - [ ] **Tier 3** - the actual target scenario: swap "any Wi-Fi network" for the Pi's own local AP.
       Only meaningful once item 0's AP-mode workaround is confirmed on the real Pi.
+
+#### What the first relay run proved (2026-08-17)
+
+A relay node configured for a 4 MHz HaLow AP (`op_class 3`, `s1g_chan_num 8`, SAE) with a WPA3-SAE
+home AP as its Wi-Fi uplink. Confirmed on hardware, from that boot's serial log:
+
+- **The two-radio netif split works.** `uplink_wifi.c` creates its STA netif under the custom if_key
+  `WIFI_STA_NATIVE` precisely because `mmhalow_init()` has already claimed `WIFI_STA_DEF` for the
+  HaLow radio. Both netifs coexisted with no duplicate-key panic in `esp_netif_new_api()` — the
+  failure that comment was written to prevent. `esp_netif_create_wifi()` +
+  `esp_wifi_set_default_wifi_sta_handlers()` is a working substitute for
+  `esp_netif_create_default_wifi_sta()`.
+- **The Wi-Fi uplink works end-to-end.** Associated to WPA3-SAE at -53 dBm, then took a DHCP lease
+  (`sta_native ip: 192.168.50.128`) and raised its state callback. `uplink_wifi.c` is no longer an
+  unproven path.
+- **`downlink_halow_ap_init()` runs clean** through `mmhalow_wifi_start()` with no error, on top of
+  a working SPI link to the MM6108 (version banner printed). This is *not* Tier 0: that call
+  returns `void`, so this still only means "we called it," not that the AP is on air.
+
+It also found a real bug, now fixed: **the datapath bring-up overflowed the event loop task's
+stack** the moment the uplink got its lease, panicking the node into a reboot loop.
+`bring_up_datapath()` (NAT + DNS + CoT relay) was being called straight from the uplink state
+callback, which both uplink modules raise from inside an `esp_event` handler — so it ran on
+`sys_evt`, whose stack is 2816 bytes total in this build and nowhere near enough. It now runs on its
+own 4096-byte `datapath` task and the callback only posts a notification. The full derivation, with
+upstream citations, is on `datapath_task()` in `main/app_main.c`.
+
+Two things worth carrying forward from that:
+
+- **This was latent in GW_ROLE_CLIENT too**, not a relay-only bug — that role calls the same
+  `bring_up_datapath()` from the same kind of handler in `uplink_halow.c`. It surfaced on the relay
+  first only because the relay is what got run. Any new uplink state callback must stay short; the
+  typedefs in `uplink_halow.h`/`uplink_wifi.h` now say so.
+- **The relay's downlink has no DHCP server, and `ip_forward_nat.c` now checks before assuming
+  one.** `mmhalow_init()` builds its netif from `ESP_NETIF_DEFAULT_WIFI_STA()`, so `esp_netif`
+  never allocates a `dhcps` handle for it and every DHCP-server call against it fails by
+  construction. That is correct — leaf nodes on this hop are statically addressed by design — but
+  it was producing two `ESP_LOGE` lines per relay boot about a server that was never meant to
+  exist. DNS propagation is now skipped, with a log line saying why, when the downlink netif lacks
+  `ESP_NETIF_DHCP_SERVER`.
 
 Both the client and relay roles keep every known HaLow constraint from `PI_SIDE.md`: security must
 be `open`/`owe`/`sae` (no PSK), region is fixed `US`, and phones behind any leaf XIAO stay NAT'd
@@ -416,6 +466,42 @@ Recorded so they aren't relitigated, and so they aren't accidentally undone.
 - **Link state is four states, not a boolean.** "Not associated" and "associated but no lease" are
   different subsystems failing, with different fixes. Collapsing them was the single biggest
   diagnosability gap the firmware had.
+
+### Stack budgets
+
+After the `sys_evt` overflow (item 8), every task and callback context in the firmware was audited.
+Recorded so the numbers don't have to be re-derived, and so the non-obvious ones aren't "tidied".
+
+**These are the sizes tasks are created with, not the headroom they actually have.** For that, run
+`gwcfg-tasks` on the console or open `GET /api/tasks` (Live Log tab → Task Stack Headroom) — both
+report `uxTaskGetStackHighWaterMark()`, the least stack each task has ever had spare. Prefer the
+measurement to this table when deciding whether a budget is too tight: the table says what was
+allocated, the instrument says what got used. Check it after the node has been up a while and
+through a reconnect or two, since a high-water mark only reflects paths that have actually run.
+
+| Context | Stack | Notes |
+|---|---|---|
+| `sys_evt` (esp_event default loop) | **2816** | 2304 Kconfig default + 512 `TASK_EXTRA_STACK_SIZE`. Not overridden. **The tightest budget in the system, and it runs every event handler.** |
+| `esp_timer` task | 4096 | 3584 + 512. Runs `reconnect_timer_cb`, `reboot_timer_cb` — both trivial by design. |
+| `datapath` | 4096 | Where NAT + CoT relay bring-up actually runs. |
+| `wifi_reconnect`, `halow_reconnect`, `cot_relay`, `factory_reset` | 4096 each | |
+| httpd (`web_ui.c`) | 6144 | Raised from esp_http_server's 4096 default. |
+| console REPL (`provisioning.c`) | 4096 | `ESP_CONSOLE_REPL_CONFIG_DEFAULT()`. |
+| `status_led` | 2048 | Deliberately small — the task body reads an enum and toggles a pin. It must stay that way; it has no room for a log call. |
+| morselib `evtloop` (SDK-owned) | 8608 | `umac_evtloop.c` asks for 2152 **words**; the ESP32 shim converts (`stack_size_u32 * 4`, `mmosal_shim_freertos_esp32.c` L216-221). This is what invokes `mm_sta_state_cb` and `scan_rx_cb` — so `web_ui.c`'s cJSON scan collector runs on an SDK task, not ours, and fits. |
+
+Two things that look like ordinary style but are load-bearing:
+
+- **`cot_relay.c`'s 1500-byte `rx_buffer` is `static`.** As a local it would be over a third of that
+  task's stack in one object.
+- **`log_buffer.c`'s `s_line[256]` is `static`, guarded by the ring's own mutex.** That hook is
+  installed via `esp_log_set_vprintf`, so it runs on *whatever task called `ESP_LOGx`* — as a local
+  it charged 256 bytes to every task in the firmware on every log call, `sys_evt` included, on top
+  of the console handler's `vprintf`. Moving it to `.bss` costs nothing in flash and removes ~9% of
+  `sys_evt`'s stack from every logged line.
+
+Anything added to an event handler, an `esp_timer` callback, or a callback the HaLow SDK invokes
+inherits one of these budgets rather than getting its own. Check which one before adding work.
 
 ## Known limitations — decisions, not bugs
 

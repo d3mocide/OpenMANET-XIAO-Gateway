@@ -12,6 +12,7 @@ idf_component_register(
         "status_led.c"
         "factory_reset.c"
         "log_buffer.c"
+        "task_stats.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi

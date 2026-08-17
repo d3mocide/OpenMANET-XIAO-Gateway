@@ -12,6 +12,7 @@
 #include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
+#include "task_stats.h"
 
 static const char *TAG = "cot_relay";
 
@@ -266,7 +267,7 @@ esp_err_t cot_relay_start(esp_netif_t *netif_a, esp_netif_t *netif_b, const gw_c
     s_group_dest.sin_addr = group_addr;
     s_group_dest.sin_port = htons(cfg->port);
 
-    if (xTaskCreate(relay_task, "cot_relay", 4096, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreate(relay_task, "cot_relay", GW_STACK_COT_RELAY, NULL, 5, NULL) != pdPASS) {
         err = ESP_ERR_NO_MEM;
         goto fail;
     }

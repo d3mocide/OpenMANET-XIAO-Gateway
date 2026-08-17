@@ -58,8 +58,8 @@ idf.py build
 - CI builds every push to `main` and every PR (one US build — see the region note below), in the
   official `espressif/idf` Docker image.
 
-Current baseline: zero errors, zero warnings, binary ~1.89 MB, 37% free in the 3 MB app slot (up
-from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the GW_ROLE_RELAY code - see
+Current baseline: zero errors, zero warnings, binary ~1.92 MB (`0x1eabb0`), 36% free in the 3 MB app
+slot (up from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the GW_ROLE_RELAY code - see
 `design/ROADMAP.md` item 8).
 
 ## Things that look like cleanup but aren't

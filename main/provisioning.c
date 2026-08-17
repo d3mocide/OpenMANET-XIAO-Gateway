@@ -16,6 +16,7 @@
 #include "lwip/inet.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "task_stats.h"
 #include "uplink_halow.h"
 #include "uplink_wifi.h"
 
@@ -718,6 +719,63 @@ static int cmd_gwcfg_radio(int argc, char **argv)
     return 0;
 }
 
+static void task_stack_print_cb(const task_stack_info_t *info, void *ctx)
+{
+    unsigned *rows = (unsigned *)ctx;
+    (*rows)++;
+
+    if (!info->present) {
+        printf("%-17s %8s  %8s  %6s  %s\n", info->name, "-", "-", "-", "not running");
+        return;
+    }
+
+    /* Integer percentage, and of *used* rather than free, so the number grows
+     * as the situation worsens - the same reason the frequency column below
+     * avoids %f: this table is read during bring-up, when a misread costs
+     * hardware time. Rounded up, so a task that has touched any of its stack
+     * at all never reports 0% used. */
+    size_t used = info->stack_total - info->stack_free_min;
+    unsigned pct = info->stack_total ? (unsigned)((used * 100 + info->stack_total - 1) / info->stack_total) : 0;
+
+    /* Flagged, not just printed. A bare column of numbers requires the reader
+     * to already know what "352 bytes free" means for a task they didn't
+     * create; these thresholds say it outright. */
+    const char *note = "";
+    if (info->stack_free_min < 256) {
+        note = "  <-- CRITICAL, will overflow";
+    } else if (info->stack_free_min < 512) {
+        note = "  <-- tight, raise it";
+    }
+
+    printf("%-17s %8u  %8u  %5u%%  %s\n", info->name, (unsigned)info->stack_total,
+           (unsigned)info->stack_free_min, pct, note);
+}
+
+/* Reports how close each task has come to overflowing its stack.
+ *
+ * Exists because this firmware has already lost a node to a stack overflow
+ * that nothing visible predicted (design/ROADMAP.md item 8): the failure is
+ * silent right up to the panic, and the margin is not inferable from reading
+ * the code. This is the instrument that makes it a number instead of a guess.
+ *
+ * Worth running after the node has been up a while and through a reconnect or
+ * two, not just at boot - the mark is a high-water measurement, so it only
+ * reflects paths that have actually executed. A task that has never yet taken
+ * its deepest branch will flatter itself here. */
+static int cmd_gwcfg_tasks(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    unsigned rows = 0;
+    printf("%-17s %8s  %8s  %6s\n", "TASK", "STACK", "FREE", "USED");
+    size_t found = task_stats_each_stack(task_stack_print_cb, &rows);
+    printf("%u of %u watched tasks running. FREE is the least this task has "
+           "ever had spare, in bytes.\n",
+           (unsigned)found, rows);
+    return 0;
+}
+
 static void scan_print_cb(const uplink_scan_result_t *result, void *ctx)
 {
     unsigned *n = (unsigned *)ctx;
@@ -854,6 +912,7 @@ esp_err_t provisioning_register_console_commands(gw_config_t *cfg)
         { .command = "gwcfg-scan", .help = "Scan for HaLow APs on this build's channel list", .hint = NULL, .func = &cmd_gwcfg_scan },
         { .command = "gwcfg-list-halow-channels", .help = "List legal (op_class, s1g_chan_num) pairs for gwcfg-set-halow-ap", .hint = NULL, .func = &cmd_gwcfg_list_halow_channels },
         { .command = "gwcfg-radio", .help = "Print HaLow BCF/firmware versions (proves SPI works)", .hint = NULL, .func = &cmd_gwcfg_radio },
+        { .command = "gwcfg-tasks", .help = "Show worst-case stack headroom per task", .hint = NULL, .func = &cmd_gwcfg_tasks },
     };
 
     for (size_t i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {

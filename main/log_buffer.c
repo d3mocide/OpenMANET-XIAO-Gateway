@@ -24,6 +24,21 @@ static bool s_wrapped = false;
 static SemaphoreHandle_t s_lock = NULL;
 static vprintf_like_t s_next = NULL;
 
+/* Static, not a local in log_vprintf(), and guarded by s_lock.
+ *
+ * This hook is installed with esp_log_set_vprintf(), so it runs on whatever
+ * task called ESP_LOGx - every task in the firmware, including ones with very
+ * little stack to spare. As a local, this array put LOG_LINE_MAX bytes on all
+ * of their stacks for the duration of every log call, on top of the vsnprintf
+ * frame below it and the console handler's own vprintf above it. 256 bytes is
+ * ~9% of the 2816-byte "sys_evt" event loop task, which is the task this
+ * project has already overflowed once (see datapath_task() in app_main.c) -
+ * a tax worth not paying anywhere, but especially not there.
+ *
+ * Safe as shared state only because every access below happens inside the
+ * s_lock critical section, which is also what serialises the ring itself. */
+static char s_line[LOG_LINE_MAX];
+
 static void ring_append(const char *data, size_t len)
 {
     if (len >= LOG_RING_SIZE) {
@@ -53,24 +68,30 @@ static int log_vprintf(const char *fmt, va_list args)
 
     int written = s_next ? s_next(fmt, args) : vprintf(fmt, args);
 
-    char line[LOG_LINE_MAX];
-    int n = vsnprintf(line, sizeof(line), fmt, ring_args);
-    va_end(ring_args);
-
-    if (n > 0) {
-        size_t len = ((size_t)n < sizeof(line)) ? (size_t)n : sizeof(line) - 1;
-        /* Never block a logging call on the lock: logging happens from every
-         * task including time-sensitive ones, and dropping a line from the
-         * in-RAM copy is far cheaper than stalling the caller. The console
-         * output above has already happened either way.
-         *
-         * Nothing in here logs, which is what keeps this from recursing back
-         * into itself through esp_log. */
-        if (s_lock != NULL && xSemaphoreTake(s_lock, 0) == pdTRUE) {
-            ring_append(line, len);
-            xSemaphoreGive(s_lock);
+    /* Never block a logging call on the lock: logging happens from every task
+     * including time-sensitive ones, and dropping a line from the in-RAM copy
+     * is far cheaper than stalling the caller. The console output above has
+     * already happened either way.
+     *
+     * Nothing in here logs, which is what keeps this from recursing back into
+     * itself through esp_log.
+     *
+     * Formatting moved inside the lock along with s_line. It costs a slightly
+     * longer hold - vsnprintf rather than just a memcpy - in exchange for
+     * keeping LOG_LINE_MAX off the caller's stack (see s_line above). It also
+     * means a line that loses the lock is no longer formatted just to be
+     * thrown away. The only other holder is log_buffer_read(), which takes it
+     * with a 100 ms timeout and does a bounded memcpy, so the longer hold
+     * can't deadlock or stall /api/log. */
+    if (s_lock != NULL && xSemaphoreTake(s_lock, 0) == pdTRUE) {
+        int n = vsnprintf(s_line, sizeof(s_line), fmt, ring_args);
+        if (n > 0) {
+            size_t len = ((size_t)n < sizeof(s_line)) ? (size_t)n : sizeof(s_line) - 1;
+            ring_append(s_line, len);
         }
+        xSemaphoreGive(s_lock);
     }
+    va_end(ring_args);
 
     return written;
 }
