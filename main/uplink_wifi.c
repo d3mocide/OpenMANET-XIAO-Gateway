@@ -8,6 +8,8 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_wifi_default.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "uplink_wifi";
 
@@ -24,7 +26,29 @@ static volatile bool s_has_ip = false;
 static uplink_wifi_state_cb_t s_cb = NULL;
 static void *s_cb_ctx = NULL;
 static esp_timer_handle_t s_reconnect_timer = NULL;
+static TaskHandle_t s_reconnect_task = NULL;
 static uint32_t s_backoff_ms = RECONNECT_BACKOFF_MIN_MS;
+
+static const char *wifi_disconnect_reason_str(uint8_t reason)
+{
+    switch (reason) {
+    case WIFI_REASON_UNSPECIFIED: return "unspecified";
+    case WIFI_REASON_AUTH_EXPIRE: return "auth expired";
+    case WIFI_REASON_AUTH_LEAVE: return "auth leave";
+    case WIFI_REASON_ASSOC_EXPIRE: return "assoc expired";
+    case WIFI_REASON_ASSOC_TOOMANY: return "assoc too many";
+    case WIFI_REASON_NOT_AUTHED: return "not authed";
+    case WIFI_REASON_NOT_ASSOCED: return "not assoced";
+    case WIFI_REASON_ASSOC_LEAVE: return "assoc leave";
+    case WIFI_REASON_ASSOC_NOT_AUTHED: return "assoc not authed";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "4-way handshake timeout (wrong PSK or PMF mismatch)";
+    case WIFI_REASON_NO_AP_FOUND: return "AP not found";
+    case WIFI_REASON_AUTH_FAIL: return "auth failed (wrong password)";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT: return "handshake timeout";
+    case WIFI_REASON_CONNECTION_FAIL: return "connection failed";
+    default: return "other";
+    }
+}
 
 static void set_has_ip(bool has_ip)
 {
@@ -38,21 +62,28 @@ static void set_has_ip(bool has_ip)
     }
 }
 
+static void wifi_reconnect_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        if (s_associated) {
+            continue;
+        }
+        s_associating = true;
+        esp_err_t err = esp_wifi_connect();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
+            s_associating = false;
+        }
+    }
+}
+
 static void reconnect_timer_cb(void *arg)
 {
     (void)arg;
-    /* esp_wifi_connect() while already connecting/connected is harmless (it
-     * just re-issues the request), but skip it once associated - identical
-     * reasoning to halow_sta_connect()'s citation in uplink_halow.c: tearing
-     * down a working association to "retry" it would be self-defeating. */
-    if (s_associated) {
-        return;
-    }
-    s_associating = true;
-    esp_err_t err = esp_wifi_connect();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "esp_wifi_connect failed: %s", esp_err_to_name(err));
-        s_associating = false;
+    if (s_reconnect_task != NULL) {
+        xTaskNotifyGive(s_reconnect_task);
     }
 }
 
@@ -69,7 +100,6 @@ static void schedule_reconnect(void)
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
     (void)arg;
-    (void)event_data;
 
     if (base == WIFI_EVENT) {
         switch (id) {
@@ -85,13 +115,17 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             ESP_LOGI(TAG, "Wi-Fi uplink associated (RSSI %" PRId8 " dBm), waiting for DHCP lease...",
                      uplink_wifi_get_rssi());
             break;
-        case WIFI_EVENT_STA_DISCONNECTED:
+        case WIFI_EVENT_STA_DISCONNECTED: {
+            const wifi_event_sta_disconnected_t *disconn = (const wifi_event_sta_disconnected_t *)event_data;
             s_associated = false;
             s_associating = false;
             set_has_ip(false);
-            ESP_LOGW(TAG, "Wi-Fi uplink disconnected, retrying in %u ms", (unsigned)s_backoff_ms);
+            uint8_t reason = disconn ? disconn->reason : 0;
+            ESP_LOGW(TAG, "Wi-Fi uplink disconnected (reason=%u: %s), retrying in %u ms",
+                     (unsigned)reason, wifi_disconnect_reason_str(reason), (unsigned)s_backoff_ms);
             schedule_reconnect();
             break;
+        }
         default:
             break;
         }
@@ -161,6 +195,11 @@ esp_err_t uplink_wifi_init(const gw_wifi_uplink_config_t *cfg)
         return err;
     }
 
+    if (xTaskCreate(wifi_reconnect_task, "wifi_reconnect", 4096, NULL, 5, &s_reconnect_task) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create wifi reconnect task");
+        return ESP_ERR_NO_MEM;
+    }
+
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err != ESP_OK) {
         return err;
@@ -178,6 +217,9 @@ esp_err_t uplink_wifi_init(const gw_wifi_uplink_config_t *cfg)
          * provisioning_validate() instead, so the failure is reported where
          * the operator is looking, not buried in a wifi_event_handler log. */
         wifi_config.sta.threshold.authmode = strlen(s_cfg.psk) > 0 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+        wifi_config.sta.pmf_cfg.capable = true;
+        wifi_config.sta.pmf_cfg.required = false;
+        wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
         err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
         if (err != ESP_OK) {
             return err;
