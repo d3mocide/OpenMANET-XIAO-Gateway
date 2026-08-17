@@ -8,6 +8,8 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "cot_relay.h"
 #include "downlink_halow_ap.h"
@@ -105,11 +107,15 @@ static void log_boot_diagnostics(void)
  * returned. */
 static gw_config_t s_cfg;
 static bool s_datapath_up = false;
+static TaskHandle_t s_datapath_task = NULL;
 
 /* Brings up NAT + the CoT relay the first time the uplink (whichever kind -
  * HaLow STA for GW_ROLE_CLIENT, native Wi-Fi STA for GW_ROLE_RELAY) gets an
- * IP. Shared by both roles' state callbacks below so the NAT-direction and
- * error-handling logic exists exactly once.
+ * IP. Shared by both roles - datapath_task() below picks the netif pair - so
+ * the NAT-direction and error-handling logic exists exactly once.
+ *
+ * Runs on the datapath task, never on the event loop task; see datapath_task()
+ * for why that distinction is load-bearing rather than stylistic.
  *
  * Known v1 limitation: if a later reconnect gets a *different* IP, NAT/CoT
  * relay aren't re-initialized against it - see design/ROADMAP.md for the
@@ -152,31 +158,99 @@ static void bring_up_datapath(esp_netif_t *downlink_netif, esp_netif_t *uplink_n
     }
 }
 
-/* GW_ROLE_CLIENT: HaLow STA uplink, local SoftAP downlink. */
-static void on_halow_uplink_state(bool connected, void *ctx)
+/* Why bring_up_datapath() runs on a task of its own instead of directly in the
+ * uplink state callback.
+ *
+ * Both uplink modules raise that callback from inside an esp_event handler, so
+ * it runs on the default event loop's task - "sys_evt". That task gets
+ * ESP_TASKD_EVENT_STACK bytes of stack, which at v5.5.1 is
+ * CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE (2304, the Kconfig default this
+ * project doesn't override) + TASK_EXTRA_STACK_SIZE (512, because
+ * CONFIG_NEWLIB_NANO_FORMAT is off) = 2816 bytes total, for everything the
+ * handler chain does. Sources: esp_event/default_event_loop.c L98-104 names the
+ * task and picks the stack macro, esp_system/include/esp_task.h L48-53 defines
+ * it, esp_system/Kconfig L219-221 gives the 2304 default.
+ *
+ * bring_up_datapath() does not fit in what's left of that below the event
+ * loop's own frames. It makes a run of esp_netif calls, then opens, binds and
+ * configures the CoT relay's socket and spawns a task - and logs as it goes,
+ * where each ESP_LOGx costs several hundred bytes of stack through the full
+ * (non-nano) newlib vfprintf. On real hardware in GW_ROLE_RELAY that overflowed
+ * and panicked the node into a reboot loop the instant the Wi-Fi uplink got its
+ * DHCP lease:
+ *
+ *     I (5325) uplink_wifi: Wi-Fi uplink up (has IP)
+ *     E (5325) ip_
+ *     ***ERROR*** A stack overflow in task sys_evt has been detected.
+ *
+ * The truncated tag is the tell: the overflow was caught while ip_forward_nat.c
+ * was still formatting that line, so the log ends mid-word.
+ *
+ * The rule this broke is that esp_event handlers must stay short - the same
+ * reason uplink_wifi.c drives esp_wifi_connect() from its own "wifi_reconnect"
+ * task rather than calling it from the WIFI_EVENT handler. So the callback now
+ * does nothing but post a notification, and the work happens here on a stack
+ * sized for it.
+ *
+ * Doing it this way also means a callback can no longer block the event loop:
+ * bring_up_datapath() waits on esp_netif's lwIP IPC for every call it makes,
+ * and stalling sys_evt stalls delivery of every other event in the system. */
+static void datapath_task(void *arg)
 {
-    gw_config_t *cfg = (gw_config_t *)ctx;
-    if (!connected) {
-        return;
+    (void)arg;
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        /* Snapshot under the lock for the same reason the role bring-up
+         * functions do it: the console and web UI are live by now and can be
+         * editing this struct concurrently. */
+        provisioning_config_lock();
+        gw_node_role_t role = s_cfg.role;
+        gw_cot_config_t cot = s_cfg.cot;
+        provisioning_config_unlock();
+
+        if (role == GW_ROLE_RELAY) {
+            /* Native Wi-Fi STA uplink (to the Pi's local AP), HaLow AP
+             * downlink (to leaf XIAOs). */
+            bring_up_datapath(downlink_halow_ap_get_netif(), uplink_wifi_get_netif(), &cot);
+        } else {
+            /* HaLow STA uplink, local SoftAP downlink. */
+            bring_up_datapath(downlink_softap_get_netif(), uplink_halow_get_netif(), &cot);
+        }
     }
-    provisioning_config_lock();
-    gw_cot_config_t cot = cfg->cot;
-    provisioning_config_unlock();
-    bring_up_datapath(downlink_softap_get_netif(), uplink_halow_get_netif(), &cot);
 }
 
-/* GW_ROLE_RELAY: native Wi-Fi STA uplink (to the Pi's local AP), HaLow AP
- * downlink (to leaf XIAOs). */
-static void on_wifi_uplink_state(bool connected, void *ctx)
+/* Runs on the event loop task for both roles - keep it to a notification and
+ * nothing else. See datapath_task() above for what happens otherwise.
+ *
+ * xTaskNotifyGive() on a task that is mid-bring-up leaves the notification
+ * pending, so a reconnect that races an in-flight attempt re-runs it rather
+ * than being dropped; bring_up_datapath()'s own s_datapath_up guard makes the
+ * repeat a no-op once the datapath is actually up. */
+static void on_uplink_state(bool connected, void *ctx)
 {
-    gw_config_t *cfg = (gw_config_t *)ctx;
-    if (!connected) {
+    (void)ctx;
+    if (!connected || s_datapath_task == NULL) {
         return;
     }
-    provisioning_config_lock();
-    gw_cot_config_t cot = cfg->cot;
-    provisioning_config_unlock();
-    bring_up_datapath(downlink_halow_ap_get_netif(), uplink_wifi_get_netif(), &cot);
+    xTaskNotifyGive(s_datapath_task);
+}
+
+/* Started only on the paths that actually register the callback, so a node
+ * with no uplink configured (or whose radio failed to init) doesn't hold 4 KB
+ * of stack for a task that can never be woken. */
+static esp_err_t datapath_task_start(void)
+{
+    if (s_datapath_task != NULL) {
+        return ESP_OK;
+    }
+    /* 4096 matches this project's other long-lived worker tasks
+     * (wifi_reconnect, halow_reconnect, cot_relay) and is well clear of what
+     * bring_up_datapath() needs. */
+    if (xTaskCreate(datapath_task, "datapath", 4096, NULL, 5, &s_datapath_task) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 
 /* Today's original design: local 2.4GHz SoftAP for phones/ATAK devices,
@@ -231,7 +305,14 @@ static void bring_up_client_role(gw_config_t *cfg)
                       "for your gateway's AP, then save and reboot",
                  cfg->softap.ssid, cfg->softap.use_custom_subnet ? cfg->softap.ip : "192.168.4.1");
     } else {
-        uplink_halow_set_state_callback(on_halow_uplink_state, cfg);
+        /* Before the callback is registered, not after: the uplink can report
+         * an IP as soon as it's started, and on_uplink_state() silently drops
+         * the notification if the task doesn't exist yet. */
+        err = datapath_task_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "failed to start the datapath task: %s", esp_err_to_name(err));
+        }
+        uplink_halow_set_state_callback(on_uplink_state, cfg);
         err = uplink_halow_start();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "failed to start HaLow reconnect task: %s", esp_err_to_name(err));
@@ -276,7 +357,12 @@ static void bring_up_relay_role(gw_config_t *cfg)
                       "open http://%s/ to set the Pi's local AP as the uplink, then save and reboot",
                  cfg->halow_ap.ip);
     } else {
-        uplink_wifi_set_state_callback(on_wifi_uplink_state, cfg);
+        /* Same ordering requirement as the client role above. */
+        err = datapath_task_start();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "failed to start the datapath task: %s", esp_err_to_name(err));
+        }
+        uplink_wifi_set_state_callback(on_uplink_state, cfg);
         err = uplink_wifi_start();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "failed to start Wi-Fi uplink: %s", esp_err_to_name(err));

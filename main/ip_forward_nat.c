@@ -91,10 +91,36 @@ esp_err_t ip_forward_nat_init(esp_netif_t *downlink_netif, esp_netif_t *uplink_n
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Step 1 of the recipe. Deliberately not fatal: a gateway with working NAT
-     * and no DNS is still useful (ATAK over the CoT relay doesn't resolve
-     * names), and the warning above tells the operator what's missing. */
-    (void)propagate_dns(downlink_netif, uplink_netif);
+    /* Step 1 of the recipe, and only meaningful when the downlink actually runs
+     * a DHCP server to put the option in.
+     *
+     * In GW_ROLE_CLIENT it does: the SoftAP netif is created DHCP-server
+     * shaped. In GW_ROLE_RELAY the downlink is the HaLow netif, which
+     * mmhalow_init() creates from ESP_NETIF_DEFAULT_WIFI_STA() - DHCP *client*
+     * shaped - and leaf nodes on that hop are statically addressed by design
+     * (design/ROADMAP.md item 8). esp_netif allocates its `dhcps` handle only
+     * for ESP_NETIF_DHCP_SERVER netifs (esp_netif_lwip.c L836-838 at v5.5.1),
+     * so every dhcps call against the HaLow netif can only fail:
+     * esp_netif_dhcps_option() short-circuits to ESP_ERR_ESP_NETIF_IF_NOT_READY
+     * on the NULL handle (L2582), and esp_netif_dhcps_start() reaches
+     * dhcps_start(NULL, ...), which returns ERR_ARG (dhcpserver.c L1362) and
+     * costs an ESP_LOGE "DHCP server cannot be started" from inside esp_netif
+     * (L1699-1700).
+     *
+     * Neither failure breaks anything - but they print as two errors on every
+     * relay boot, describing a DHCP server that was never supposed to exist,
+     * which is exactly the noise that buries a real fault. So check the netif's
+     * flags first rather than calling and discarding the failure.
+     *
+     * Deliberately not fatal when it does run: a gateway with working NAT and
+     * no DNS is still useful (ATAK over the CoT relay doesn't resolve names),
+     * and propagate_dns()'s own warning tells the operator what's missing. */
+    if (esp_netif_get_flags(downlink_netif) & ESP_NETIF_DHCP_SERVER) {
+        (void)propagate_dns(downlink_netif, uplink_netif);
+    } else {
+        ESP_LOGI(TAG, "downlink runs no DHCP server - skipping DNS propagation (nodes on this "
+                      "hop are statically addressed)");
+    }
 
     /* Step 2. The uplink must be the default route netif so translated traffic
      * actually egresses toward the mesh - ESP-IDF's softap_sta example

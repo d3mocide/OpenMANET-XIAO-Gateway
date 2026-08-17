@@ -24,6 +24,10 @@ extern "C" {
  * morsemicro/halow there) and are never active on the same node at once -
  * role selection in gw_config_t.role is exactly one or the other. */
 
+/* Same contract as uplink_halow_state_cb_t: raised from the default esp_event
+ * loop task ("sys_evt", 2816 bytes of stack in this build), so it must be short
+ * and non-blocking. See that typedef in uplink_halow.h and datapath_task() in
+ * app_main.c. */
 typedef void (*uplink_wifi_state_cb_t)(bool connected, void *ctx);
 
 /* Same shape as uplink_link_state_t in uplink_halow.h (RADIO_FAILED has no

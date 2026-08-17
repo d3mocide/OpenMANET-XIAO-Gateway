@@ -15,7 +15,13 @@ extern "C" {
 /* Called whenever the HaLow uplink transitions between having a DHCP-leased
  * IP and not (IP_EVENT_STA_GOT_IP/LOST_IP on this netif - deliberately not
  * just 802.11 association, since NAT/CoT relay need a real IP to be useful).
- * Invoked from the default esp_event loop task, not an ISR. */
+ *
+ * Invoked from the default esp_event loop task, not an ISR - so the
+ * implementation must be short and must not block. That task ("sys_evt") has
+ * 2816 bytes of stack in this build and the same task delivers every other
+ * event in the system. Doing real work here is what overflowed it and put the
+ * node in a reboot loop; see the comment on datapath_task() in app_main.c,
+ * which is how the current callback stays within budget. */
 typedef void (*uplink_halow_state_cb_t)(bool connected, void *ctx);
 
 /* Where the uplink actually is, as opposed to the binary "usable / not usable"
