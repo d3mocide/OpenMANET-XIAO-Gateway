@@ -466,6 +466,35 @@ Recorded so they aren't relitigated, and so they aren't accidentally undone.
   different subsystems failing, with different fixes. Collapsing them was the single biggest
   diagnosability gap the firmware had.
 
+### Stack budgets
+
+After the `sys_evt` overflow (item 8), every task and callback context in the firmware was audited.
+Recorded so the numbers don't have to be re-derived, and so the non-obvious ones aren't "tidied".
+
+| Context | Stack | Notes |
+|---|---|---|
+| `sys_evt` (esp_event default loop) | **2816** | 2304 Kconfig default + 512 `TASK_EXTRA_STACK_SIZE`. Not overridden. **The tightest budget in the system, and it runs every event handler.** |
+| `esp_timer` task | 4096 | 3584 + 512. Runs `reconnect_timer_cb`, `reboot_timer_cb` — both trivial by design. |
+| `datapath` | 4096 | Where NAT + CoT relay bring-up actually runs. |
+| `wifi_reconnect`, `halow_reconnect`, `cot_relay`, `factory_reset` | 4096 each | |
+| httpd (`web_ui.c`) | 6144 | Raised from esp_http_server's 4096 default. |
+| console REPL (`provisioning.c`) | 4096 | `ESP_CONSOLE_REPL_CONFIG_DEFAULT()`. |
+| `status_led` | 2048 | Deliberately small — the task body reads an enum and toggles a pin. It must stay that way; it has no room for a log call. |
+| morselib `evtloop` (SDK-owned) | 8608 | `umac_evtloop.c` asks for 2152 **words**; the ESP32 shim converts (`stack_size_u32 * 4`, `mmosal_shim_freertos_esp32.c` L216-221). This is what invokes `mm_sta_state_cb` and `scan_rx_cb` — so `web_ui.c`'s cJSON scan collector runs on an SDK task, not ours, and fits. |
+
+Two things that look like ordinary style but are load-bearing:
+
+- **`cot_relay.c`'s 1500-byte `rx_buffer` is `static`.** As a local it would be over a third of that
+  task's stack in one object.
+- **`log_buffer.c`'s `s_line[256]` is `static`, guarded by the ring's own mutex.** That hook is
+  installed via `esp_log_set_vprintf`, so it runs on *whatever task called `ESP_LOGx`* — as a local
+  it charged 256 bytes to every task in the firmware on every log call, `sys_evt` included, on top
+  of the console handler's `vprintf`. Moving it to `.bss` costs nothing in flash and removes ~9% of
+  `sys_evt`'s stack from every logged line.
+
+Anything added to an event handler, an `esp_timer` callback, or a callback the HaLow SDK invokes
+inherits one of these budgets rather than getting its own. Check which one before adding work.
+
 ## Known limitations — decisions, not bugs
 
 Recorded so they don't get "fixed" by accident.
