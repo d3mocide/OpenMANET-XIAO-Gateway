@@ -9,6 +9,7 @@
 #include "downlink_halow_ap.h"
 #include "log_buffer.h"
 #include "provisioning.h"
+#include "task_stats.h"
 #include "uplink_halow.h"
 #include "uplink_wifi.h"
 
@@ -764,6 +765,64 @@ static esp_err_t channels_get_handler(httpd_req_t *req)
     return err;
 }
 
+static void task_stack_collect_cb(const task_stack_info_t *info, void *ctx)
+{
+    cJSON *array = (cJSON *)ctx;
+
+    cJSON *item = cJSON_CreateObject();
+    if (item == NULL) {
+        return;
+    }
+    cJSON_AddStringToObject(item, "name", info->name);
+    cJSON_AddBoolToObject(item, "present", info->present);
+    cJSON_AddNumberToObject(item, "stack", (double)info->stack_total);
+    /* Absent tasks report free = 0, which the page must not draw as "0 bytes
+     * left" - hence the explicit `present` flag above rather than leaving the
+     * client to infer it from a sentinel value. */
+    cJSON_AddNumberToObject(item, "free", (double)(info->present ? info->stack_free_min : 0));
+    cJSON_AddItemToArray(array, item);
+}
+
+/* Worst-case stack headroom per task, the same data as the console's
+ * gwcfg-tasks.
+ *
+ * Deliberately its own endpoint rather than another field on /api/status: the
+ * page polls status on a timer, and this costs an xTaskGetHandle() name walk
+ * plus a stack scan per row (see task_stats.h). It's a diagnostic you open,
+ * not a gauge that ticks.
+ *
+ * Reachable without a serial cable on purpose. The overflow this exists to
+ * predict took down a node that had no console attached, which is the normal
+ * case for anything deployed - see design/ROADMAP.md item 8. */
+static esp_err_t tasks_get_handler(httpd_req_t *req)
+{
+    if (reject_if_remote(req)) {
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *array = root ? cJSON_AddArrayToObject(root, "tasks") : NULL;
+    if (array == NULL) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    task_stats_each_stack(task_stack_collect_cb, array);
+
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (out == NULL) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, out);
+    free(out);
+    return err;
+}
+
 static void reboot_timer_cb(void *arg)
 {
     (void)arg;
@@ -828,7 +887,7 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
      * stack, on top of the default 4KB. (Scan *results* are delivered from the
      * driver's own task - see uplink_halow.h - but assembling and serializing
      * the response happens here.) */
-    config.stack_size = 6144;
+    config.stack_size = GW_STACK_WEB_UI;
 
     httpd_handle_t server = NULL;
     esp_err_t err = httpd_start(&server, &config);
@@ -844,6 +903,7 @@ esp_err_t web_ui_start(gw_config_t *cfg, esp_netif_t *softap_netif)
         { .uri = "/api/config", .method = HTTP_GET, .handler = config_get_handler },
         { .uri = "/api/config", .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/api/log", .method = HTTP_GET, .handler = log_get_handler },
+        { .uri = "/api/tasks", .method = HTTP_GET, .handler = tasks_get_handler },
         { .uri = "/api/scan", .method = HTTP_POST, .handler = scan_post_handler },
         { .uri = "/api/reboot", .method = HTTP_POST, .handler = reboot_post_handler },
     };

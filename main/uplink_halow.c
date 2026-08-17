@@ -11,6 +11,8 @@
 
 #include "mmhalow.h"
 
+#include "task_stats.h"
+
 static const char *TAG = "uplink_halow";
 
 #define RECONNECT_BACKOFF_MIN_MS 1000
@@ -400,7 +402,7 @@ esp_err_t uplink_halow_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    BaseType_t ok = xTaskCreate(reconnect_task, "halow_reconnect", 4096, NULL, 5, &s_reconnect_task_handle);
+    BaseType_t ok = xTaskCreate(reconnect_task, "halow_reconnect", GW_STACK_HALOW_RECONNECT, NULL, 5, &s_reconnect_task_handle);
     return ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;
 }
 

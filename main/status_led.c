@@ -8,6 +8,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "task_stats.h"
 #include "uplink_halow.h"
 #include "uplink_wifi.h"
 
@@ -114,7 +115,7 @@ esp_err_t status_led_start(gw_node_role_t role)
     led_write(false);
 
     /* Small stack: the task only reads an enum and toggles a pin. */
-    if (xTaskCreate(status_led_task, "status_led", 2048, NULL, 2, NULL) != pdPASS) {
+    if (xTaskCreate(status_led_task, "status_led", GW_STACK_STATUS_LED, NULL, 2, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
 

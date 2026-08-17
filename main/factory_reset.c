@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "provisioning.h"
 #include "status_led.h"
+#include "task_stats.h"
 
 static const char *TAG = "factory_reset";
 
@@ -120,7 +121,7 @@ esp_err_t factory_reset_start(gw_config_t *cfg)
      * runs the full provisioning_save() -> NVS blob write + commit path on
      * this stack, and this task is the recovery path of last resort - a stack
      * overflow here bricks the one no-cable escape hatch a deployed node has. */
-    if (xTaskCreate(factory_reset_task, "factory_reset", 4096, NULL, 2, NULL) != pdPASS) {
+    if (xTaskCreate(factory_reset_task, "factory_reset", GW_STACK_FACTORY_RESET, NULL, 2, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
 

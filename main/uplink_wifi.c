@@ -10,6 +10,7 @@
 #include "esp_wifi_default.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "task_stats.h"
 
 static const char *TAG = "uplink_wifi";
 
@@ -195,7 +196,7 @@ esp_err_t uplink_wifi_init(const gw_wifi_uplink_config_t *cfg)
         return err;
     }
 
-    if (xTaskCreate(wifi_reconnect_task, "wifi_reconnect", 4096, NULL, 5, &s_reconnect_task) != pdPASS) {
+    if (xTaskCreate(wifi_reconnect_task, "wifi_reconnect", GW_STACK_WIFI_RECONNECT, NULL, 5, &s_reconnect_task) != pdPASS) {
         ESP_LOGE(TAG, "failed to create wifi reconnect task");
         return ESP_ERR_NO_MEM;
     }

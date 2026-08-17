@@ -259,6 +259,7 @@ baked-in region. It also has a **scan** button and a **device log** view.
 xiao-gw> gwcfg-status    # link state, RSSI, IPs, relay state, region
 xiao-gw> gwcfg-scan      # which HaLow APs are audible, and on what channel
 xiao-gw> gwcfg-radio     # HaLow BCF/firmware versions - proves SPI to the module works
+xiao-gw> gwcfg-tasks     # per-task stack headroom - the early warning for a crash-reboot loop
 ```
 
 **Forgot the SoftAP password, or otherwise locked out?** Hold the **BOOT button for 5 seconds**
@@ -283,6 +284,7 @@ main/
 ├── status_led.c         on-board LED as a link-state indicator (no cable, no phone needed)
 ├── factory_reset.c      BOOT-button hold restores default config
 ├── log_buffer.c         in-RAM ring of recent logs, served at /api/log
+├── task_stats.c         per-task stack headroom, served at /api/tasks and by gwcfg-tasks
 ├── web_ui.c             on-device HTTP config UI, SoftAP clients only (same NVS config as gwcfg-*)
 ├── web_ui.html          embedded into the firmware image, not a separate filesystem
 └── minify_web_ui.py     build step: strips comments/indentation from the *embedded copy* of

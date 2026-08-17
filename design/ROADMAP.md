@@ -19,7 +19,7 @@ FGH100M-H — 902–928 MHz, US only.** One build, `CONFIG_HALOW_COUNTRY_CODE="U
 decisions" and [`HARDWARE.md`](HARDWARE.md) "Regulatory domain".
 
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
-component: **zero errors, zero warnings**, binary ~1.91 MB (`0x1e9bb0`), **36% free** in the 3 MB
+component: **zero errors, zero warnings**, binary ~1.92 MB (`0x1eabb0`), **36% free** in the 3 MB
 app slot on confirmed 8 MB flash (down from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the
 GW_ROLE_RELAY code below - see item 8). Verified by actually running the build, not by reading
 code.
@@ -72,9 +72,10 @@ callback, check which task will run it and what stack that task has.
 | NAT / IP forwarding | `main/ip_forward_nat.c` | All three steps of ESP-IDF's NAT recipe: DNS propagation into the SoftAP's DHCP offers, uplink as default route, NAPT on the downlink. |
 | CoT multicast relay | `main/cot_relay.c` | One socket joined to 239.2.3.1:6969 on both netifs, `IP_PKTINFO`/`recvmsg()` for arrival interface, loop prevention via `IP_MULTICAST_LOOP` off + own-source drop. |
 | Provisioning | `main/provisioning.c` | NVS config blob (magic + version stamped, validated on load and save) plus `gwcfg-*` console commands over USB Serial/JTAG. `gwcfg-set-role` selects GW_ROLE_CLIENT/GW_ROLE_RELAY at runtime - one firmware image, no separate relay build. |
-| Web config UI | `main/web_ui.c` / `.html` | `esp_http_server` + embedded HTML. `GET /api/status`, `GET`/`POST /api/config`, `GET /api/log`, `POST /api/scan`, `POST /api/reboot`. Same NVS config as the console. SoftAP clients only; **no authentication yet**. |
+| Web config UI | `main/web_ui.c` / `.html` | `esp_http_server` + embedded HTML. `GET /api/status`, `GET`/`POST /api/config`, `GET /api/log`, `GET /api/tasks`, `POST /api/scan`, `POST /api/reboot`. Same NVS config as the console. SoftAP clients only; **no authentication yet**. |
 | Status LED | `main/status_led.c` | On-board GPIO21 LED blinks the uplink link state. The only instrument needing neither cable nor phone. |
 | Factory reset | `main/factory_reset.c` | 5 s BOOT-button hold restores defaults and reboots; LED acknowledges at 1.5 s. |
+| Stack headroom | `main/task_stats.c` | Worst-case free stack per task via `uxTaskGetStackHighWaterMark()`, surfaced as `gwcfg-tasks` and `GET /api/tasks`. Turns "is this close to overflowing?" into a number - see "Stack budgets" below. |
 | Log ring buffer | `main/log_buffer.c` | `esp_log_set_vprintf` tee into a 6 KB RAM ring, served at `/api/log`. Chains to the previous handler, so serial output is unaffected. |
 | App wiring | `main/app_main.c` | Brings up log buffer, LED, factory-reset watcher, console and web UI immediately; then one of two role-specific bring-up paths (`bring_up_client_role()` / `bring_up_relay_role()`). NAT + CoT relay come up via a shared helper once whichever uplink holds a usable IP, retrying on the next reconnect if that fails. |
 | Web flasher + CI | `docs/`, `.github/workflows/` | ESP Web Tools page, single US build. GitHub Actions builds `sdkconfig.defaults` unmodified and deploys to Pages; PRs build but don't deploy. |
@@ -470,6 +471,13 @@ Recorded so they aren't relitigated, and so they aren't accidentally undone.
 
 After the `sys_evt` overflow (item 8), every task and callback context in the firmware was audited.
 Recorded so the numbers don't have to be re-derived, and so the non-obvious ones aren't "tidied".
+
+**These are the sizes tasks are created with, not the headroom they actually have.** For that, run
+`gwcfg-tasks` on the console or open `GET /api/tasks` (Live Log tab → Task Stack Headroom) — both
+report `uxTaskGetStackHighWaterMark()`, the least stack each task has ever had spare. Prefer the
+measurement to this table when deciding whether a budget is too tight: the table says what was
+allocated, the instrument says what got used. Check it after the node has been up a while and
+through a reconnect or two, since a high-water mark only reflects paths that have actually run.
 
 | Context | Stack | Notes |
 |---|---|---|

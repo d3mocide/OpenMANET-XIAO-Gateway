@@ -20,6 +20,7 @@
 #include "log_buffer.h"
 #include "provisioning.h"
 #include "status_led.h"
+#include "task_stats.h"
 #include "uplink_halow.h"
 #include "uplink_wifi.h"
 #include "web_ui.h"
@@ -247,7 +248,7 @@ static esp_err_t datapath_task_start(void)
     /* 4096 matches this project's other long-lived worker tasks
      * (wifi_reconnect, halow_reconnect, cot_relay) and is well clear of what
      * bring_up_datapath() needs. */
-    if (xTaskCreate(datapath_task, "datapath", 4096, NULL, 5, &s_datapath_task) != pdPASS) {
+    if (xTaskCreate(datapath_task, "datapath", GW_STACK_DATAPATH, NULL, 5, &s_datapath_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
