@@ -58,11 +58,9 @@ idf.py build
 - CI builds every push to `main` and every PR (one US build — see the region note below), in the
   official `espressif/idf` Docker image.
 
-Current baseline: zero errors, zero warnings. The last measured binary was ~1.92 MB (`0x1eabb0`),
-36% free in the 3 MB app slot (up from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the
-GW_ROLE_RELAY code - see `design/ROADMAP.md` item 8). **That number predates
-`CONFIG_COMPILER_OPTIMIZATION_SIZE=y` and the gzipped web UI**, both of which shrink it; re-measure
-and update this line and `design/ROADMAP.md` from a real build rather than estimating the delta.
+Current baseline: zero errors, zero warnings, binary ~1.74 MB (`0x1be2f0`), 42% free in the 3 MB app
+slot. That is 178 KB below the ~1.92 MB / 36% it sat at through the GW_ROLE_RELAY work, from `-Os`
+(~145 KB) plus the gzipped web UI (33,694 bytes) - see `design/ROADMAP.md` "Status at a glance".
 
 ## Things that look like cleanup but aren't
 

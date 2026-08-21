@@ -19,16 +19,14 @@ FGH100M-H — 902–928 MHz, US only.** One build, `CONFIG_HALOW_COUNTRY_CODE="U
 decisions" and [`HARDWARE.md`](HARDWARE.md) "Regulatory domain".
 
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
-component: **zero errors, zero warnings**. The last measured binary was ~1.92 MB (`0x1eabb0`),
-**36% free** in the 3 MB app slot on confirmed 8 MB flash (down from ~1.67 MB / 44% before
-`CONFIG_HALOW_AP_MODE` and the GW_ROLE_RELAY code below - see item 8). Verified by actually running
-the build, not by reading code.
+component: **zero errors, zero warnings**, binary **~1.74 MB (`0x1be2f0`)**, **42% free** in the
+3 MB app slot on confirmed 8 MB flash. Verified by actually running the build, not by reading code.
 
-⚠️ **That size predates two changes that shrink it** and has not been re-measured:
-`CONFIG_COMPILER_OPTIMIZATION_SIZE=y` (the build was on ESP-IDF's default `-Og`) and the web UI now
-being gzipped as well as minified before embedding (44,362 → 10,668 bytes, ~33 KB of the slot
-returned). Take the new figure from a real build and update this line, `../CLAUDE.md`, and item 8
-below - don't estimate the delta.
+That is 182,464 bytes (178 KB, 9.1%) smaller than the ~1.92 MB / 36% this sat at through the
+GW_ROLE_RELAY work, from two changes measured together on one build: `-Os` instead of ESP-IDF's
+default `-Og` (~145 KB, and it applies to esp-halow's vendored hostapd/wpa_supplicant fork as much
+as to this project's own code) and gzipping the embedded web UI (33,694 bytes). The slot now has
+more headroom than it did before AP mode landed.
 
 **First hardware bring-up is under way.** Steps 1 and 4 have passed on a real XIAO ESP32-S3 +
 WM6108: the MM6108 answers over SPI with its version banner, and the SoftAP leases addresses and
@@ -335,7 +333,8 @@ after updating, per the usual policy.
 
 **Confirmed by build, not yet by hardware**: `idf.py build` passes clean against ESP-IDF v5.5.1 with
 `CONFIG_HALOW_AP_MODE=y` now always on (binary grew from ~1.67 MB/44% free to ~1.89 MB/37% free -
-built into every image since role is a runtime choice, not a build-time one). What building does
+built into every image since role is a runtime choice, not a build-time one). Both figures are
+pre-`-Os`; the slot is back to 42% free since - see "Status at a glance". What building does
 *not* prove: Morse Micro's own header marks `mmwlan_ap_args`/`mmwlan_ap_enable()` "ALPHA NOTICE:
 under development; breaking changes may be introduced," and while ESP32-S3+MM6108 is in
 `esp-halow`'s tested-hardware table, its README doesn't break testing out by mode - AP mode
