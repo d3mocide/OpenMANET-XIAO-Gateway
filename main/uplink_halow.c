@@ -8,6 +8,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "lwip/inet.h"
 
 #include "mmhalow.h"
 
@@ -146,6 +147,77 @@ static void ip_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
     }
 }
 
+/* Applies a fixed address to the uplink netif instead of running DHCP.
+ *
+ * This exists for exactly one topology: a leaf associating to a GW_ROLE_RELAY
+ * node's HaLow AP. That AP runs no DHCP server and structurally cannot -
+ * mmhalow_init() builds its netif from ESP_NETIF_DEFAULT_WIFI_STA(), a DHCP
+ * *client* shape, so esp_netif never allocates it a dhcps handle (see the long
+ * comment on gw_uplink_config_t.use_static_ip). Against a real Pi this stays
+ * off and the DHCP client runs as it always has.
+ *
+ * Called once at bring-up, before association, and that ordering is what makes
+ * the rest of the firmware need no changes at all - esp_netif already
+ * implements this path end to end:
+ *
+ *  - esp_netif_dhcpc_stop() from the initial ESP_NETIF_DHCP_INIT state takes
+ *    neither the STARTED nor the STOPPED branch, falls through to
+ *    `dhcpc_status = ESP_NETIF_DHCP_STOPPED` and returns ESP_OK
+ *    (esp_netif_lwip.c L1547-1582 at v5.5.1). It has to run first:
+ *    esp_netif_set_ip_info() rejects a netif whose DHCP client isn't stopped,
+ *    with ESP_ERR_ESP_NETIF_DHCP_NOT_STOPPED (L1982-1985).
+ *  - esp_netif_set_ip_info() then stores the address in esp_netif->ip_info.
+ *    It does NOT raise an event here, because that block is guarded by
+ *    netif_is_up() (L1997) and this netif is not up yet:
+ *    ESP_NETIF_INHERENT_DEFAULT_WIFI_STA() does not carry
+ *    ESP_NETIF_FLAG_AUTOUP, which is the only flag that would have brought it
+ *    up back in esp_netif_start_api() (L1187). That matters - an
+ *    IP_EVENT_STA_GOT_IP raised before association would start NAT and the CoT
+ *    relay against a link that doesn't exist.
+ *  - On association mmhalow raises its link-state callback (mmhalow.c L16-29),
+ *    which calls esp_netif_action_connected(). That runs esp_netif_up() -
+ *    applying esp_netif->ip_info to the lwIP netif ("use last obtained ip, or
+ *    static ip") - and then, seeing ESP_NETIF_DHCP_CLIENT with status STOPPED
+ *    and a valid static address, posts IP_EVENT_STA_GOT_IP itself
+ *    (esp_netif_handlers.c, esp_netif_action_connected). ip_event_handler()
+ *    below already consumes that, so set_has_ip(true) and the datapath
+ *    bring-up happen through the identical path DHCP uses.
+ *
+ * Because that lives in action_connected, it re-runs on every reconnect - the
+ * address is reapplied each time the link comes back, with no work here.
+ *
+ * One real consequence, deliberately not worked around: a static uplink learns
+ * no DNS server, and esp_netif_set_ip_info() additionally calls
+ * dns_clear_servers(true) on a DHCP-client netif (L1987). ip_forward_nat.c
+ * already handles that - propagate_dns() warns and returns ESP_ERR_NOT_FOUND
+ * rather than offering clients 0.0.0.0 - so a leaf on this hop gets working IP
+ * connectivity and no name resolution. That is the correct trade for a hop
+ * whose whole purpose is carrying CoT, which is addressed by IP. */
+static esp_err_t apply_static_ip(esp_netif_t *netif, const gw_uplink_config_t *cfg)
+{
+    esp_netif_ip_info_t ip_info = { 0 };
+    ip_info.ip.addr = ipaddr_addr(cfg->static_ip);
+    ip_info.gw.addr = ipaddr_addr(cfg->static_gateway);
+    ip_info.netmask.addr = ipaddr_addr(cfg->static_netmask);
+
+    esp_err_t err = esp_netif_dhcpc_stop(netif);
+    if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+        ESP_LOGE(TAG, "couldn't stop the uplink DHCP client: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = esp_netif_set_ip_info(netif, &ip_info);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "couldn't set the uplink static IP %s/%s: %s", cfg->static_ip,
+                 cfg->static_netmask, esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "uplink is statically addressed %s/%s via %s - no DHCP client will run",
+             cfg->static_ip, cfg->static_netmask, cfg->static_gateway);
+    return ESP_OK;
+}
+
 static esp_err_t halow_sta_bringup(const gw_uplink_config_t *cfg, esp_netif_t **out_netif)
 {
     esp_err_t err = mmhalow_init(NULL);
@@ -168,6 +240,15 @@ static esp_err_t halow_sta_bringup(const gw_uplink_config_t *cfg, esp_netif_t **
     err = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, ip_event_handler, NULL, NULL);
     if (err != ESP_OK) {
         return err;
+    }
+
+    /* Before the "not configured" early return below: an operator can set a
+     * static address and an SSID in either order, and applying it here keeps
+     * this independent of which came first. Non-fatal - a leaf that can't take
+     * its static address is still worth bringing up, since the console and web
+     * UI are how the mistake gets corrected. */
+    if (cfg->use_static_ip) {
+        (void)apply_static_ip(netif, cfg);
     }
 
     /* Radio bring-up finishes here even with no uplink provisioned, and that's
@@ -301,14 +382,26 @@ static void reconnect_task(void *arg)
         }
 
         backoff_ms = RECONNECT_BACKOFF_MIN_MS;
-        ESP_LOGI(TAG, "HaLow STA associated (RSSI %" PRId32 " dBm), waiting for DHCP lease...",
-                 uplink_halow_get_rssi());
+        ESP_LOGI(TAG, "HaLow STA associated (RSSI %" PRId32 " dBm), waiting for %s...",
+                 uplink_halow_get_rssi(), s_cfg.use_static_ip ? "the static address to apply"
+                                                              : "DHCP lease");
 
         /* Association alone isn't usable - NAT and the CoT relay both need a
          * real address (see ip_event_handler's comment). Bound the wait so a
-         * silent DHCP failure can't strand the task here indefinitely. */
+         * silent DHCP failure can't strand the task here indefinitely.
+         *
+         * A statically-addressed uplink gets exactly one attempt: its address
+         * arrives via esp_netif_action_connected() posting IP_EVENT_STA_GOT_IP
+         * on link-up (see apply_static_ip()), which either happens within a
+         * poll interval or points at something a retry can't fix. Restarting
+         * the DHCP client - what the extra attempts exist to do - would be
+         * actively harmful there: esp_netif_dhcpc_start() puts the netif back
+         * under DHCP and discards the static address this leaf depends on,
+         * because its AP has no DHCP server to answer the request that
+         * follows. */
+        const int attempts = s_cfg.use_static_ip ? 1 : DHCP_RESTART_ATTEMPTS;
         bool leased = false;
-        for (int attempt = 0; attempt < DHCP_RESTART_ATTEMPTS; attempt++) {
+        for (int attempt = 0; attempt < attempts; attempt++) {
             if (wait_for_dhcp_lease(DHCP_LEASE_TIMEOUT_MS)) {
                 leased = true;
                 break;
@@ -316,7 +409,7 @@ static void reconnect_task(void *arg)
             if (!halow_sta_link_up()) {
                 break; /* dropped while waiting - re-associate below */
             }
-            if (attempt + 1 < DHCP_RESTART_ATTEMPTS) {
+            if (attempt + 1 < attempts) {
                 ESP_LOGW(TAG, "associated but no DHCP lease after %u ms, restarting DHCP client",
                          (unsigned)DHCP_LEASE_TIMEOUT_MS);
                 esp_netif_dhcpc_stop(s_netif);
@@ -333,7 +426,16 @@ static void reconnect_task(void *arg)
              * is a real API in the component's public header, so the earlier
              * approach of re-calling mmhalow_connect() on top of a live
              * association is no longer necessary. */
-            ESP_LOGW(TAG, "no DHCP lease on this association, disconnecting and re-associating");
+            if (s_cfg.use_static_ip) {
+                /* Not a DHCP problem, so don't report one. The likely causes
+                 * are a relay AP that accepted the association but never
+                 * brought its link up, or an address this build rejected -
+                 * see apply_static_ip()'s log line earlier in the boot. */
+                ESP_LOGW(TAG, "associated but the static address never took effect, "
+                              "disconnecting and re-associating");
+            } else {
+                ESP_LOGW(TAG, "no DHCP lease on this association, disconnecting and re-associating");
+            }
             set_has_ip(false);
             esp_err_t dis_err = mmhalow_disconnect();
             if (dis_err != ESP_OK) {
