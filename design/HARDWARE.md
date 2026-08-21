@@ -369,6 +369,11 @@ than no note.
 **Prerequisites:** the node assembled as above with both antennas fitted, and a Pi running its
 HaLow radio in AP mode ([`PI_SIDE.md`](PI_SIDE.md)).
 
+**On the first flash of an `-Os` build, re-run steps 1 and 4 even though `ROADMAP.md` already ticks
+them.** They passed at `-Og`; the size pass changed codegen everywhere, morselib's SPI shims
+included. Five minutes here keeps an unrelated failure later from looking like a regression in
+whatever you were actually testing.
+
 ## The instruments you have
 
 | Instrument | Reach for it when | Needs |
@@ -376,6 +381,11 @@ HaLow radio in AP mode ([`PI_SIDE.md`](PI_SIDE.md)).
 | **Status LED** | You're looking at the node and want to know how far it got | Nothing |
 | **Web UI** at `http://172.16.50.1/` | You want detail: state, RSSI, IPs, client count, logs, scan | A phone/laptop on the node's Wi-Fi |
 | **Serial console** (`idf.py monitor`) | The SoftAP itself isn't working, or you want a scan table | USB-C cable |
+
+The page itself is served gzipped — `main/web_ui.c` sets `Content-Encoding: gzip` over the
+compressed asset the build embeds. Browsers handle that invisibly; bare `curl` doesn't advertise
+gzip, so `curl http://172.16.50.1/` dumps compressed bytes into your terminal. Use
+`curl --compressed`. The `/api/*` JSON endpoints are served uncompressed and need no flag.
 
 ### LED patterns
 

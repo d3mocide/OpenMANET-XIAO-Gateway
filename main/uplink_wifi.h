@@ -41,8 +41,14 @@ typedef enum {
     WIFI_UPLINK_UNCONFIGURED = 0, /* no SSID has ever been provisioned */
     WIFI_UPLINK_DOWN,             /* configured, not connected */
     WIFI_UPLINK_CONNECTING,       /* association/DHCP in progress */
-    WIFI_UPLINK_ASSOCIATED,       /* 802.11 associated, no IP yet (DHCP) or
-                                    * static IP not yet applied */
+    WIFI_UPLINK_ASSOCIATED,       /* 802.11 associated, DHCP still outstanding.
+                                   * This uplink is DHCP-only by design -
+                                   * gw_wifi_uplink_config_t carries no
+                                   * static-IP fields, unlike the HaLow
+                                   * uplink's gw_uplink_config_t, because this
+                                   * hop joins a Pi's ordinary AP and that AP
+                                   * runs a DHCP server. See ROADMAP.md
+                                   * "Known limitations". */
     WIFI_UPLINK_UP,               /* associated and has a usable IP */
 } uplink_wifi_link_state_t;
 
