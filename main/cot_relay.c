@@ -123,6 +123,40 @@ static void relay_task(void *arg)
             continue;
         }
 
+        /* recvmsg() on a UDP socket returns the length of the *datagram*, not
+         * the number of bytes copied into the iovec. lwip_recvmsg()'s UDP/RAW
+         * path ends with:
+         *
+         *     if (datagram_len > buflen) { message->msg_flags |= MSG_TRUNC; }
+         *     ...
+         *     return (int)datagram_len;
+         *
+         * (esp-lwip 2.2.0-esp, src/api/sockets.c L1411-1417 - the branch
+         * ESP-IDF v5.5.x ships), while lwip_recvfrom_udp_raw() copies only up
+         * to the iovec's capacity and sets *datagram_len from netbuf_len(buf).
+         *
+         * So for a datagram larger than rx_buffer, `len` is the on-wire size
+         * and every byte past sizeof(rx_buffer) was never written. Passing
+         * `len` to send_via() would read off the end of rx_buffer into
+         * whatever the linker placed after it in .bss and transmit that onto
+         * the mesh. lwIP reassembles IP fragments before delivery, so an
+         * oversized CoT event really does arrive here as one long datagram
+         * rather than as MTU-sized pieces.
+         *
+         * msg_flags is safe to read: lwip_recvfrom_udp_raw() zeroes it
+         * ("Initialize flag output", L1200) on every successful receive.
+         *
+         * Dropped rather than clamped to sizeof(rx_buffer): a truncated CoT
+         * event is malformed XML that the far end can't parse anyway, so
+         * forwarding the first 1500 bytes buys nothing and hides the cause.
+         * This log line is what turns "ATAK intermittently misses events" into
+         * a one-line diagnosis. */
+        if (msg.msg_flags & MSG_TRUNC) {
+            ESP_LOGW(TAG, "dropped a %d-byte datagram - larger than the %u-byte relay buffer",
+                     len, (unsigned)sizeof(rx_buffer));
+            continue;
+        }
+
         /* Which interface did this arrive on? Use ipi_ifindex, NOT ipi_addr:
          * lwIP fills ipi_addr from the packet's *destination* address
          * (sockets.c: inet_addr_from_ip4addr(&pkti->ipi_addr,
