@@ -38,19 +38,62 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Most of this build is not this project's code - CONFIG_HALOW_AP_MODE=y
+      # pulls in esp-halow's vendored wpa_supplicant/hostapd fork - and none of
+      # it changes between pushes, so compiling it from scratch every time is
+      # the bulk of the wall clock on a one-line firmware change.
+      #
+      # ccache lives inside the workspace rather than in $HOME because of how
+      # esp-idf-ci-action runs: it mounts only $GITHUB_WORKSPACE into the
+      # container (`-v "${GITHUB_WORKSPACE}:/app/${{ github.repository }}"`, see
+      # that action's action.yml), so a cache restored to the runner's home
+      # directory would be invisible to the compiler. A workspace path is
+      # visible on both sides, which is what makes actions/cache work here at
+      # all. ccache itself is already installed in the espressif/idf image
+      # (esp-idf tools/docker/Dockerfile lists it in the apt install block).
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        id: restore-ccache
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-idf5.5.1-esp32s3-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-idf5.5.1-esp32s3-
+
       # Builds inside the official espressif/idf Docker image for the pinned
       # version - avoids the local-toolchain gotchas found setting this up by
       # hand: missing libusb for openocd, the Python venv step silently not
       # completing, etc.
       # CONFIG_HALOW_COUNTRY_CODE="US" comes straight from sdkconfig.defaults,
       # so this is a plain build with no SDKCONFIG_DEFAULTS layering.
+      #
+      # IDF_CCACHE_ENABLE is the environment variable behind `idf.py --ccache`
+      # ("Use ccache in build. Disabled by default." - esp-idf v5.5.1,
+      # tools/idf_py_actions/core_ext.py L380-383), so it has to be passed into
+      # the container; extra_docker_args is the action's hook for that.
       - name: Build firmware
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.1
           target: esp32s3
           path: "."
+          extra_docker_args: >-
+            -e IDF_CCACHE_ENABLE=1
+            -e CCACHE_DIR=/app/${{ github.repository }}/.ccache
+            -e CCACHE_MAXSIZE=500M
           command: idf.py build
+
+      # save/restore rather than the combined action: the key is pinned to the
+      # commit SHA so every build writes a fresh entry (GitHub's cache entries
+      # are immutable, so a fixed key would go stale after the first run and
+      # never pick up newly compiled objects), and the restore-keys prefix above
+      # is what makes the previous build's cache the starting point.
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-idf5.5.1-esp32s3-${{ github.sha }}
 
       - name: Assemble manifest + binaries
         run: |
