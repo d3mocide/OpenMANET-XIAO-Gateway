@@ -32,9 +32,23 @@ that ever stops being true, this script fails loudly rather than guessing - see
 the mid-line checks below. Newlines are always preserved so JS automatic
 semicolon insertion behaves identically to the unminified source.
 
-Usage: minify_web_ui.py <input.html> <output.html>
+GZIP
+----
+With --gzip the minified result is deflate-compressed before it is written, and
+web_ui.c serves it with `Content-Encoding: gzip`. The two stages compound
+rather than compete: measured on the current file, minify+gzip is 10,665 bytes
+against 12,245 for gzip alone, so stripping comments first still earns its
+place - and web_ui.html keeps its comments either way.
+
+mtime is pinned to 0 in the gzip header. The default is "now", which would put
+a fresh timestamp in the embedded asset on every build and churn the firmware
+binary even when nothing changed.
+
+Usage: minify_web_ui.py [--gzip] <input.html> <output>
 """
 
+import gzip
+import io
 import re
 import sys
 
@@ -136,11 +150,25 @@ def minify(text):
     return "\n".join(out) + "\n"
 
 
+def _gzip_bytes(data):
+    """Deterministic gzip: same input, byte-identical output, every build."""
+    buf = io.BytesIO()
+    # mtime=0 rather than the default "now" - see the module docstring.
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9, mtime=0) as gz:
+        gz.write(data)
+    return buf.getvalue()
+
+
 def main():
-    if len(sys.argv) != 3:
+    args = sys.argv[1:]
+    use_gzip = False
+    if "--gzip" in args:
+        use_gzip = True
+        args.remove("--gzip")
+    if len(args) != 2:
         print(__doc__, file=sys.stderr)
         return 2
-    src, dst = sys.argv[1], sys.argv[2]
+    src, dst = args
 
     with open(src, "r", encoding="utf-8") as f:
         text = f.read()
@@ -151,11 +179,17 @@ def main():
         print(f"minify_web_ui.py: {exc}", file=sys.stderr)
         return 1
 
-    with open(dst, "w", encoding="utf-8") as f:
-        f.write(result)
+    payload = result.encode()
+    minified = len(payload)
+    if use_gzip:
+        payload = _gzip_bytes(payload)
 
-    before, after = len(text.encode()), len(result.encode())
-    print(f"web_ui.html: {before} -> {after} bytes embedded "
+    with open(dst, "wb") as f:
+        f.write(payload)
+
+    before, after = len(text.encode()), len(payload)
+    detail = f" (minified {minified}, then gzipped)" if use_gzip else ""
+    print(f"web_ui.html: {before} -> {after} bytes embedded{detail} "
           f"({before - after} saved, {100.0 * (before - after) / before:.1f}%)")
     return 0
 

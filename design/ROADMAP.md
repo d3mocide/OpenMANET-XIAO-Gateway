@@ -19,10 +19,14 @@ FGH100M-H — 902–928 MHz, US only.** One build, `CONFIG_HALOW_COUNTRY_CODE="U
 decisions" and [`HARDWARE.md`](HARDWARE.md) "Regulatory domain".
 
 `idf.py build` **passes end-to-end** against ESP-IDF v5.5.1 with the real `morsemicro/halow`
-component: **zero errors, zero warnings**, binary ~1.92 MB (`0x1eabb0`), **36% free** in the 3 MB
-app slot on confirmed 8 MB flash (down from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the
-GW_ROLE_RELAY code below - see item 8). Verified by actually running the build, not by reading
-code.
+component: **zero errors, zero warnings**, binary **~1.74 MB (`0x1be2f0`)**, **42% free** in the
+3 MB app slot on confirmed 8 MB flash. Verified by actually running the build, not by reading code.
+
+That is 182,464 bytes (178 KB, 9.1%) smaller than the ~1.92 MB / 36% this sat at through the
+GW_ROLE_RELAY work, from two changes measured together on one build: `-Os` instead of ESP-IDF's
+default `-Og` (~145 KB, and it applies to esp-halow's vendored hostapd/wpa_supplicant fork as much
+as to this project's own code) and gzipping the embedded web UI (33,694 bytes). The slot now has
+more headroom than it did before AP mode landed.
 
 **First hardware bring-up is under way.** Steps 1 and 4 have passed on a real XIAO ESP32-S3 +
 WM6108: the MM6108 answers over SPI with its version banner, and the SoftAP leases addresses and
@@ -48,11 +52,24 @@ problem:
 - the CoT relay matched `IP_PKTINFO`'s `ipi_addr` (the packet's *destination*, always the multicast
   group) instead of `ipi_ifindex`, dropping 100% of traffic while logging success;
 - NAPT was enabled on the uplink netif when ESP-IDF requires it on the SoftAP netif;
-- SoftAP clients were handed no DNS server, so every hostname lookup failed while raw IP worked.
+- SoftAP clients were handed no DNS server, so every hostname lookup failed while raw IP worked;
+- the CoT relay passed `recvmsg()`'s return value straight to its forwarding `sendto()`. On a UDP
+  socket lwIP returns the *datagram's* length there, not the bytes copied into the iovec
+  (`if (datagram_len > buflen) msg_flags |= MSG_TRUNC; ... return (int)datagram_len` — esp-lwip
+  `2.2.0-esp`, `src/api/sockets.c` L1411-1417), so any CoT event over 1500 bytes made the relay
+  read past its `.bss` receive buffer and transmit whatever followed it onto the mesh. Now dropped
+  on `MSG_TRUNC`, with a log line;
+- `use_static_ip` was fully plumbed — console command, web UI field, validation, `gwcfg-status`,
+  `/api/config` — and **never read by `uplink_halow.c`**. Since a relay's HaLow AP deliberately
+  runs no DHCP server, a leaf configured exactly as documented could only associate, wait out two
+  30-second lease timeouts, disconnect and loop forever. It now applies the address at bring-up,
+  and `esp_netif_action_connected()` raises `IP_EVENT_STA_GOT_IP` for it on every link-up.
 
-All three were found by checking this firmware's assumptions against upstream ESP-IDF/lwIP source,
+All five were found by checking this firmware's assumptions against upstream ESP-IDF/lwIP source,
 not by re-reading this repo. Assume the same class of error exists elsewhere. See
-[`../CLAUDE.md`](../CLAUDE.md) for the working rule this produced.
+[`../CLAUDE.md`](../CLAUDE.md) for the working rule this produced. Note what the last two have in
+common with the first three: every one of them compiles clean, and every one presents on hardware
+as a radio or link problem.
 
 **A fourth was found only by running it** (2026-08-17, item 8): the datapath bring-up was correct
 against every API it called, and still crashed — because of *where* it ran, not what it did. Called
@@ -316,7 +333,8 @@ after updating, per the usual policy.
 
 **Confirmed by build, not yet by hardware**: `idf.py build` passes clean against ESP-IDF v5.5.1 with
 `CONFIG_HALOW_AP_MODE=y` now always on (binary grew from ~1.67 MB/44% free to ~1.89 MB/37% free -
-built into every image since role is a runtime choice, not a build-time one). What building does
+built into every image since role is a runtime choice, not a build-time one). Both figures are
+pre-`-Os`; the slot is back to 42% free since - see "Status at a glance". What building does
 *not* prove: Morse Micro's own header marks `mmwlan_ap_args`/`mmwlan_ap_enable()` "ALPHA NOTICE:
 under development; breaking changes may be introduced," and while ESP32-S3+MM6108 is in
 `esp-halow`'s tested-hardware table, its README doesn't break testing out by mode - AP mode
@@ -333,7 +351,11 @@ real hardware. Procedure and pass/fail criteria for each is in
       of the alpha AP-mode API by itself.
 - [ ] **Tier 1** - does a leaf's `gwcfg-set-uplink` against that AP actually associate, and does the
       static-IP-on-both-ends addressing scheme (no DHCP server on a relay's HaLow AP - see
-      `main/downlink_halow_ap.h`) actually pass traffic once associated?
+      `main/downlink_halow_ap.h`) actually pass traffic once associated? **Note this could not have
+      passed before**: `use_static_ip` was stored and validated but never applied to the netif, so
+      the leaf ran a DHCP client against an AP with no DHCP server. Fixed — `apply_static_ip()` in
+      `main/uplink_halow.c`, which is also where the derivation lives. Untested on hardware, so
+      treat a Tier 1 failure as a real result rather than assuming this fix settled it.
 - [ ] **Tier 2** - the full chain against *any* ordinary Wi-Fi network on the relay's uplink side
       (still no Pi needed) - first real-hardware run of the NAT/DNS/CoT-relay pipeline at all.
       **Attempted 2026-08-17 against an ordinary WPA3-SAE home AP.** The uplink half passed and the
@@ -483,7 +505,7 @@ through a reconnect or two, since a high-water mark only reflects paths that hav
 |---|---|---|
 | `sys_evt` (esp_event default loop) | **2816** | 2304 Kconfig default + 512 `TASK_EXTRA_STACK_SIZE`. Not overridden. **The tightest budget in the system, and it runs every event handler.** |
 | `esp_timer` task | 4096 | 3584 + 512. Runs `reconnect_timer_cb`, `reboot_timer_cb` — both trivial by design. |
-| `datapath` | 4096 | Where NAT + CoT relay bring-up actually runs. |
+| `datapath` | 4096 | Where NAT + CoT relay bring-up actually runs. **Exits once the datapath is up**, returning the 4 KB — so `absent` is the healthy steady state in `gwcfg-tasks`, and still-present means an attempt is outstanding. |
 | `wifi_reconnect`, `halow_reconnect`, `cot_relay`, `factory_reset` | 4096 each | |
 | httpd (`web_ui.c`) | 6144 | Raised from esp_http_server's 4096 default. |
 | console REPL (`provisioning.c`) | 4096 | `ESP_CONSOLE_REPL_CONFIG_DEFAULT()`. |
@@ -511,7 +533,16 @@ Recorded so they don't get "fixed" by accident.
 - **NAT and the relay initialize against the first uplink IP only.** If a later reconnect leases a
   *different* address they are not re-initialized against it. Whether this matters depends on
   whether lease changes happen in practice, which hardware testing will answer. (A *failed* init
-  does retry on the next reconnect — that was a bug and is fixed. Different thing.)
+  does retry on the next reconnect — that was a bug and is fixed. Different thing.) Because of
+  this, the `datapath` task now exits once both halves are up and returns its 4 KB stack; it stays
+  alive only while an attempt is still outstanding. If this limitation is ever lifted, that exit
+  has to go with it.
+- **A statically-addressed uplink gets no DNS.** `gwcfg-set-uplink-static-ip` means no DHCP
+  client, so nothing learns a resolver — and `esp_netif_set_ip_info()` additionally calls
+  `dns_clear_servers(true)` on a DHCP-client netif. `ip_forward_nat.c` handles it correctly
+  (warns, and leaves the downlink's DHCP DNS option off rather than offering `0.0.0.0`), so leaf
+  clients get working IP connectivity and no name resolution. Acceptable on a hop whose purpose is
+  CoT, which is addressed by IP. A configurable static DNS server is the fix if it ever matters.
 - **No captive-portal DNS redirect.** A real UX gap, not a defect. See item 4 above.
 - **No web UI authentication.** See item 1. The SoftAP passphrase plus the subnet check (and the
   interim Host/Content-Type CSRF guards) is the current boundary.

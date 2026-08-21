@@ -58,9 +58,9 @@ idf.py build
 - CI builds every push to `main` and every PR (one US build — see the region note below), in the
   official `espressif/idf` Docker image.
 
-Current baseline: zero errors, zero warnings, binary ~1.92 MB (`0x1eabb0`), 36% free in the 3 MB app
-slot (up from ~1.67 MB / 44% before `CONFIG_HALOW_AP_MODE` and the GW_ROLE_RELAY code - see
-`design/ROADMAP.md` item 8).
+Current baseline: zero errors, zero warnings, binary ~1.74 MB (`0x1be2f0`), 42% free in the 3 MB app
+slot. That is 178 KB below the ~1.92 MB / 36% it sat at through the GW_ROLE_RELAY work, from `-Os`
+(~145 KB) plus the gzipped web UI (33,694 bytes) - see `design/ROADMAP.md` "Status at a glance".
 
 ## Things that look like cleanup but aren't
 
@@ -98,8 +98,10 @@ them without reading it.
   binary of *identical* size, differing only in the ELF hash, the image checksum, and a few
   embedded `__LINE__` values. The preprocessor discards comments before codegen.
   **`main/web_ui.html` is the one exception**, because it's embedded verbatim — and
-  `main/minify_web_ui.py` already strips the embedded copy at build time (~24%), so the source file
-  should stay commented too. Don't delete that build step, and don't hand-minify the source.
+  `main/minify_web_ui.py` already strips *and gzips* the embedded copy at build time (52,818 →
+  44,362 → 10,668 bytes), so the source file should stay commented too. Don't delete that build
+  step, and don't hand-minify the source. Both stages earn their place: gzip alone gives 12,245
+  bytes, so minifying first is still worth ~13% on top of it.
 - **Bump `GW_CONFIG_VERSION`** (`main/gw_config.h`) whenever `gw_config_t`'s layout *or the meaning
   of a field* changes. Stored config is discarded on mismatch, which is deliberate.
 - **New GPIO goes in `main/board.h`** and must not collide with the `CONFIG_MM_*` pins (1, 2, 3, 4,

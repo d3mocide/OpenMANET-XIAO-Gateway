@@ -198,6 +198,25 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     }
     const size_t len = web_ui_html_end - web_ui_html_start;
     httpd_resp_set_type(req, "text/html");
+    /* The embedded asset is gzip, not HTML - main/CMakeLists.txt runs
+     * minify_web_ui.py --gzip over web_ui.html and embeds the compressed
+     * result (52,818 bytes of source become 10,668 in flash). Content-Type
+     * still describes the *decoded* body, per RFC 9110 8.4; Content-Encoding
+     * is what tells the browser to inflate it first. Without this header the
+     * page renders as binary garbage.
+     *
+     * Safe to serve unconditionally: every browser sends
+     * `Accept-Encoding: gzip` and has since HTTP/1.1, and there is no
+     * uncompressed copy in flash to fall back to anyway. Worth knowing during
+     * bring-up: bare `curl http://172.16.50.1/` does *not* advertise gzip and
+     * will dump the compressed bytes - use `curl --compressed`.
+     *
+     * The header value must outlive the call: httpd_resp_set_hdr() stores the
+     * caller's pointers verbatim rather than copying the strings
+     * (esp_http_server/src/httpd_txrx.c L189-190 at v5.5.1,
+     * `ra->resp_hdrs[n].field = field; ... .value = value;`). String literals
+     * satisfy that; a stack buffer would not. */
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     return httpd_resp_send(req, web_ui_html_start, len);
 }
 

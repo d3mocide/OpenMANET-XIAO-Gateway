@@ -9,3 +9,11 @@ sdkconfig.old
 # single US build alongside it (manifest.json + the .bin set) at the site root.
 docs/manifest.json
 docs/*.bin
+
+# ccache directory used by the CI build. It lives inside the workspace rather
+# than $HOME because esp-idf-ci-action only mounts $GITHUB_WORKSPACE into the
+# container - see .github/workflows/build-firmware.yml.
+.ccache/
+
+# Left behind by running main/minify_web_ui.py directly.
+__pycache__/

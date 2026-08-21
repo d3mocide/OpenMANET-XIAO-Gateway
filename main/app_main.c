@@ -9,6 +9,7 @@
 #include "esp_netif.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 
 #include "cot_relay.h"
@@ -110,6 +111,23 @@ static gw_config_t s_cfg;
 static bool s_datapath_up = false;
 static TaskHandle_t s_datapath_task = NULL;
 
+/* What on_uplink_state() pokes to wake datapath_task().
+ *
+ * A binary semaphore rather than the task notification this used to use, and
+ * that choice is what lets datapath_task() exit when its work is done (see the
+ * end of that function). A notification has to be addressed to a task handle,
+ * so the event-loop task would have to read s_datapath_task and then call
+ * xTaskNotifyGive() on it - and there is no way to make "read the handle" and
+ * "notify through it" atomic against the task freeing its own TCB in between.
+ * The window is small and the crash would be rare, unattended, and blamed on
+ * something else.
+ *
+ * A semaphore has no such window: it is created before the task and never
+ * deleted, so a give that lands after the task is gone is simply a give
+ * nobody takes. Giving a binary semaphore that is already available returns
+ * pdFALSE and does nothing else, so the repeat costs nothing either. */
+static SemaphoreHandle_t s_datapath_wake = NULL;
+
 /* Brings up NAT + the CoT relay the first time the uplink (whichever kind -
  * HaLow STA for GW_ROLE_CLIENT, native Wi-Fi STA for GW_ROLE_RELAY) gets an
  * IP. Shared by both roles - datapath_task() below picks the netif pair - so
@@ -190,7 +208,7 @@ static void bring_up_datapath(esp_netif_t *downlink_netif, esp_netif_t *uplink_n
  * The rule this broke is that esp_event handlers must stay short - the same
  * reason uplink_wifi.c drives esp_wifi_connect() from its own "wifi_reconnect"
  * task rather than calling it from the WIFI_EVENT handler. So the callback now
- * does nothing but post a notification, and the work happens here on a stack
+ * does nothing but give a semaphore, and the work happens here on a stack
  * sized for it.
  *
  * Doing it this way also means a callback can no longer block the event loop:
@@ -200,7 +218,7 @@ static void datapath_task(void *arg)
 {
     (void)arg;
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        xSemaphoreTake(s_datapath_wake, portMAX_DELAY);
 
         /* Snapshot under the lock for the same reason the role bring-up
          * functions do it: the console and web UI are live by now and can be
@@ -218,23 +236,54 @@ static void datapath_task(void *arg)
             /* HaLow STA uplink, local SoftAP downlink. */
             bring_up_datapath(downlink_softap_get_netif(), uplink_halow_get_netif(), &cot);
         }
+
+        /* Done means done: give the 4 KB back rather than parking it.
+         *
+         * Once s_datapath_up is set, every future pass through this loop is
+         * bring_up_datapath() returning at its first line - NAT and the CoT
+         * relay are both up and are deliberately not re-initialized against a
+         * later uplink IP (that limitation is recorded in design/ROADMAP.md
+         * under "Known limitations", and is a decision, not an oversight). So
+         * the task would otherwise sit on portMAX_DELAY for the life of the
+         * device holding a stack sized for the heaviest thing it ever does.
+         *
+         * 4 KB is worth reclaiming on a part that also runs two Wi-Fi stacks,
+         * lwIP with NAT, and an HTTP server. The retry-on-failure path is
+         * untouched: if either half failed, s_datapath_up is still false and
+         * this task stays alive waiting for the next reconnect to try again -
+         * which is exactly the bug the flag was moved here to fix.
+         *
+         * The handle is cleared first so nothing is left holding a pointer to
+         * a TCB the idle task is about to free - on_uplink_state() no longer
+         * reads it at all (that is what s_datapath_wake is for), and
+         * datapath_task_start() is called exactly once per boot, from the role
+         * bring-up path before this task can have finished. `gwcfg-tasks` and
+         * /api/tasks will report "datapath" as absent from here on, which
+         * task_stats.c already treats as information rather than an error. */
+        if (s_datapath_up) {
+            ESP_LOGI(TAG, "datapath is up - the bring-up task has finished and is exiting, "
+                          "returning its %u-byte stack", (unsigned)GW_STACK_DATAPATH);
+            s_datapath_task = NULL;
+            vTaskDelete(NULL);
+        }
     }
 }
 
-/* Runs on the event loop task for both roles - keep it to a notification and
+/* Runs on the event loop task for both roles - keep it to a wake-up and
  * nothing else. See datapath_task() above for what happens otherwise.
  *
- * xTaskNotifyGive() on a task that is mid-bring-up leaves the notification
- * pending, so a reconnect that races an in-flight attempt re-runs it rather
- * than being dropped; bring_up_datapath()'s own s_datapath_up guard makes the
- * repeat a no-op once the datapath is actually up. */
+ * A give on a task that is mid-bring-up leaves the semaphore available, so a
+ * reconnect that races an in-flight attempt re-runs it rather than being
+ * dropped; bring_up_datapath()'s own s_datapath_up guard makes the repeat a
+ * no-op once the datapath is actually up, and after that the task has exited
+ * and the give goes nowhere at all. */
 static void on_uplink_state(bool connected, void *ctx)
 {
     (void)ctx;
-    if (!connected || s_datapath_task == NULL) {
+    if (!connected || s_datapath_wake == NULL) {
         return;
     }
-    xTaskNotifyGive(s_datapath_task);
+    xSemaphoreGive(s_datapath_wake);
 }
 
 /* Started only on the paths that actually register the callback, so a node
@@ -245,9 +294,20 @@ static esp_err_t datapath_task_start(void)
     if (s_datapath_task != NULL) {
         return ESP_OK;
     }
+    /* Before the task, not after: the task's first act is to wait on this,
+     * and on_uplink_state() drops a wake-up on the floor if it doesn't exist
+     * yet. */
+    if (s_datapath_wake == NULL) {
+        s_datapath_wake = xSemaphoreCreateBinary();
+        if (s_datapath_wake == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     /* 4096 matches this project's other long-lived worker tasks
      * (wifi_reconnect, halow_reconnect, cot_relay) and is well clear of what
-     * bring_up_datapath() needs. */
+     * bring_up_datapath() needs. Unlike them, this one is not long-lived - it
+     * exits once the datapath is up (see datapath_task()). */
     if (xTaskCreate(datapath_task, "datapath", GW_STACK_DATAPATH, NULL, 5, &s_datapath_task) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }

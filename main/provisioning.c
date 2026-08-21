@@ -253,15 +253,34 @@ esp_err_t provisioning_validate(const gw_config_t *cfg, char *errbuf, size_t err
      * one validator, shared by console/web UI/NVS load, that doesn't need
      * to know which fields the active role actually reads. */
     if (cfg->uplink.use_static_ip) {
-        struct in_addr tmp;
-        if (inet_aton(cfg->uplink.static_ip, &tmp) == 0) {
-            GW_REJECT("uplink static IP '%s' is not a valid address", cfg->uplink.static_ip);
+        /* Parsing is necessary but not sufficient, and each of these three
+         * fails differently and silently if left at zero:
+         *
+         *  - a zero address or netmask makes esp_netif_is_valid_static_ip()
+         *    false, so esp_netif_action_connected() logs a bare "invalid
+         *    static ip" from inside esp_netif and never posts
+         *    IP_EVENT_STA_GOT_IP. The node associates and then sits at
+         *    "associated, no lease" forever with nothing naming the cause.
+         *  - a zero gateway parses and applies fine, and then nothing routes
+         *    off this subnet: ip_forward_nat_init() makes the uplink the
+         *    default netif, so every NAT'd client packet heads for a gateway
+         *    that isn't there.
+         *
+         * inet_aton() accepts "0.0.0.0" for all three, so reject them here -
+         * in front of the operator, who is looking at this error text - rather
+         * than three layers down at a moment nobody is watching. */
+        struct in_addr addr;
+        if (inet_aton(cfg->uplink.static_ip, &addr) == 0 || addr.s_addr == 0) {
+            GW_REJECT("uplink static IP '%s' must be a valid, non-zero address",
+                      cfg->uplink.static_ip);
         }
-        if (inet_aton(cfg->uplink.static_gateway, &tmp) == 0) {
-            GW_REJECT("uplink static gateway '%s' is not a valid address", cfg->uplink.static_gateway);
+        if (inet_aton(cfg->uplink.static_gateway, &addr) == 0 || addr.s_addr == 0) {
+            GW_REJECT("uplink static gateway '%s' must be a valid, non-zero address",
+                      cfg->uplink.static_gateway);
         }
-        if (inet_aton(cfg->uplink.static_netmask, &tmp) == 0) {
-            GW_REJECT("uplink static netmask '%s' is not a valid address", cfg->uplink.static_netmask);
+        if (inet_aton(cfg->uplink.static_netmask, &addr) == 0 || addr.s_addr == 0) {
+            GW_REJECT("uplink static netmask '%s' must be a valid, non-zero address",
+                      cfg->uplink.static_netmask);
         }
     }
 
