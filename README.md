@@ -288,7 +288,9 @@ main/
 ├── web_ui.c             on-device HTTP config UI, SoftAP clients only (same NVS config as gwcfg-*)
 ├── web_ui.html          embedded into the firmware image, not a separate filesystem
 └── minify_web_ui.py     build step: strips comments/indentation from the *embedded copy* of
-                        web_ui.html (~24%), leaving the source file commented
+                        web_ui.html and gzips it (52,818 -> 10,668 bytes), leaving
+                        the source file commented; web_ui.c serves it with
+                        Content-Encoding: gzip
 partitions.csv           dual-OTA: 2x 3MB app slots + otadata + 64K coredump (app is at 0x20000)
 docs/
 └── index.html           ESP Web Tools browser flasher page (single US build)
