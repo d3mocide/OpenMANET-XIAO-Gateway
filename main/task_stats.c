@@ -65,8 +65,13 @@ size_t task_stats_each_stack(task_stack_cb_t cb, void *ctx)
         /* Several of these are legitimately absent depending on role and
          * state: halow_reconnect only exists in GW_ROLE_CLIENT, wifi_reconnect
          * only in GW_ROLE_RELAY, cot_relay only once the datapath is up, and
-         * datapath only when an uplink was configured at boot. NULL here is
-         * information, not an error - report the row as absent. */
+         * datapath only when an uplink was configured at boot - and only until
+         * the datapath actually comes up, at which point that task exits and
+         * returns its stack (see datapath_task() in app_main.c). So on a
+         * healthy node "datapath: absent" is the expected steady state and
+         * means the bring-up succeeded; seeing it still present is the
+         * interesting case. NULL here is information, not an error - report
+         * the row as absent. */
         TaskHandle_t handle = xTaskGetHandle(s_watched[i].name);
         if (handle != NULL) {
             /* Bytes, not words.
