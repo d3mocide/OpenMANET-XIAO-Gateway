@@ -6,7 +6,7 @@ you're picking the project back up.**
 - Companion docs: [`HARDWARE.md`](HARDWARE.md) (what to buy, how to build one, how to bring it up),
   [`PI_SIDE.md`](PI_SIDE.md) (the other end of the link)
 - Architecture diagram and repo layout: [`../README.md`](../README.md)
-- **Last updated:** 2026-08-17
+- **Last updated:** 2026-08-21
 
 Keep this file current: tick the checklist when a step passes, move an item out of "not built yet"
 when it lands, and add to "settled decisions" rather than re-arguing one. Historical detail
@@ -106,6 +106,12 @@ Procedure for each step — what to run, what a pass looks like, how to tell ide
 failures apart — is in [`HARDWARE.md`](HARDWARE.md) Part 2. This is the tracker; that is the
 runbook. **The step numbers are shared** — if you renumber one, renumber the other, or a recorded
 "step 5 passed" stops meaning one thing.
+
+**Steps 1 and 4 passed at `-Og`, not at `-Os`.** The size pass (2026-08-21) put every component
+through different codegen, the morselib SPI shims that step 1 exercises included. Re-run both on
+the first `-Os` flash before reading any new failure as a regression somewhere else — they are the
+two cheapest steps here and they re-establish the baseline the rest is measured against. Tick them
+again in place; there is no separate step for this.
 
 - [ ] **Step 0** — Confirm the Pi's HaLow radio config: AP mode, SSID, security mode, country,
       DHCP behaviour. See [`PI_SIDE.md`](PI_SIDE.md) "Still to verify". The Pi has to be on **US**
@@ -240,6 +246,22 @@ it: no light sleep, no duty cycling, no battery voltage sensing.
 with SoftAP clients attached; whether the MM6108's own power-save modes are usable given the relay
 needs to receive multicast promptly. *Then* battery voltage on an ADC pin, reported via
 `/api/status` and the beacon, and a considered decision about sleep.
+
+**Two wake-ups are already identified and deliberately unchanged** — recorded so the pass starts
+from them instead of re-deriving them (review finding, 2026-08-21):
+
+- **`status_led` wakes at 8 Hz.** `TICK_MS 125` in `main/status_led.c` is the tick the blink
+  patterns are built on. It can't just be slowed: the task has to wake to toggle the pin at all, so
+  the saving is pattern-shaped (a steady-on or steady-off state needs no tick; a blink does), not a
+  constant to raise.
+- **`factory_reset` polls the BOOT button at 10 Hz.** `POLL_INTERVAL_MS 100` in
+  `main/factory_reset.c`, held time counted in whole poll intervals. An ISR-driven button would
+  idle at zero wake-ups, but it puts an interrupt path in front of the one recovery mechanism that
+  has to work when everything else is broken — a trade worth making only against a number.
+
+Both were left alone on purpose. Neither is free to change, and nobody has yet measured what either
+costs next to a radio that can't use power-save at all (`CONFIG_HALOW_PS_MODE=n` — see "Settled
+decisions"). They are two of the first things to put a meter on, not two things to change first.
 
 The same argument applies to throughput. If TCP-through-NAT disappoints on hardware, the knobs are
 `CONFIG_LWIP_TCP_WND_DEFAULT` / `CONFIG_LWIP_TCP_SND_BUF_DEFAULT` and the Wi-Fi buffer counts — but
@@ -543,6 +565,12 @@ Recorded so they don't get "fixed" by accident.
   (warns, and leaves the downlink's DHCP DNS option off rather than offering `0.0.0.0`), so leaf
   clients get working IP connectivity and no name resolution. Acceptable on a hop whose purpose is
   CoT, which is addressed by IP. A configurable static DNS server is the fix if it ever matters.
+- **The relay's Wi-Fi uplink is DHCP-only.** `gw_wifi_uplink_config_t` (`main/gw_config.h`) holds an
+  SSID and a PSK and nothing else, so a GW_ROLE_RELAY node can't be statically addressed on its
+  Wi-Fi hop the way a leaf can on its HaLow one. It has never needed to be: that hop joins a Pi's
+  ordinary `br-ahwlan` AP, which runs a DHCP server. Adding it costs new fields, a
+  `GW_CONFIG_VERSION` bump and a second copy of `apply_static_ip()`'s derivation — do it only if a
+  Pi turns up with no DHCP server on that interface.
 - **No captive-portal DNS redirect.** A real UX gap, not a defect. See item 4 above.
 - **No web UI authentication.** See item 1. The SoftAP passphrase plus the subnet check (and the
   interim Host/Content-Type CSRF guards) is the current boundary.
