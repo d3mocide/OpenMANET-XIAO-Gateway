@@ -165,3 +165,51 @@ CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
+# --- Build-size / throughput knobs ---
+
+# -Os instead of ESP-IDF's default -Og.
+#
+# The default is COMPILER_OPTIMIZATION_DEBUG (esp-idf/Kconfig at v5.5.1,
+# `choice COMPILER_OPTIMIZATION` -> `default COMPILER_OPTIMIZATION_DEBUG`),
+# which is -Og. IDF's own help text for the Size setting reads: "The 'Size'
+# setting cause the compiled code to be smaller and faster" - both axes, not a
+# trade between them.
+#
+# It matters here more than in a typical app because most of this image isn't
+# this project's code: CONFIG_HALOW_AP_MODE=y pulls in esp-halow's vendored
+# wpa_supplicant/hostapd fork, and all of it was being built at -Og. The 3 MB
+# slot has room today, but the two things queued behind it - OTA (which needs
+# a second slot's worth of headroom in practice) and the self-beacon's CoT
+# formatter - both spend it.
+#
+# The cost, and it is real: -Os inlines and reorders enough that a core dump's
+# backtrace correlates less cleanly to source lines. Core dumps are on
+# precisely because this node crashes unattended (see the coredump section
+# above), so that is not a free trade. It is taken deliberately rather than
+# silently - `idf.py coredump-info` still symbolizes, it is just less exact
+# about which line inside a function.
+#
+# Hardware re-validation note: this changes codegen for every task in the
+# firmware, including the morselib shims that talk to the MM6108 over SPI.
+# Checklist steps 1 and 4 passed on real hardware at -Og; re-confirm them after
+# the first flash of an -Os build before reading any new failure as a
+# regression in something else.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# NAT port forwarding off.
+#
+# CONFIG_LWIP_IPV4_NAPT_PORTMAP defaults to `y` (components/lwip/Kconfig at
+# v5.5.1) and is pulled in implicitly by the CONFIG_LWIP_IPV4_NAPT=y above, so
+# this build has been carrying lwIP's port-mapping tables without ever calling
+# ip_portmap_add(). It is the machinery for forwarding an inbound port to a
+# specific client behind the NAT - which design/ROADMAP.md's "Settled
+# decisions" explicitly rules out ("nobody on the mesh can originate a
+# connection to a specific phone behind the XIAO"; the v2 fix named there is a
+# static route on the Pi, not a firmware change).
+#
+# Turning it off frees the tables rather than changing any behaviour this
+# firmware has. If inbound port forwarding is ever wanted, this line is the
+# first thing to flip back - and it should be re-added deliberately, with the
+# roadmap decision revisited, rather than left on by default in case.
+CONFIG_LWIP_IPV4_NAPT_PORTMAP=n
