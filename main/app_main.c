@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#include "driver/gpio.h"
 #include "esp_app_desc.h"
 #include "esp_core_dump.h"
 #include "esp_event.h"
@@ -145,10 +146,68 @@ static SemaphoreHandle_t s_datapath_wake = NULL;
  * downlink netif momentarily without an address, say - permanently disabled
  * the datapath until someone power-cycled the node, because no later
  * reconnect would ever try again. */
+
+/* Bounds how long bring_up_datapath() will wait for the downlink netif to
+ * come up before giving up on this attempt - see wait_for_downlink_up()'s
+ * doc comment for what this is guarding against. */
+#define DOWNLINK_UP_POLL_MS    100
+#define DOWNLINK_UP_TIMEOUT_MS 5000
+
+/* Blocks until downlink_netif is up at the lwIP level, or DOWNLINK_UP_TIMEOUT_MS
+ * elapses.
+ *
+ * In GW_ROLE_CLIENT the downlink is the SoftAP, which esp_wifi marks up
+ * essentially at start - this returns true on its first check there, always.
+ *
+ * In GW_ROLE_RELAY the downlink is the HaLow AP netif. mmhalow_init() creates
+ * it as ESP_NETIF_DEFAULT_WIFI_STA() (downlink_halow_ap.c's own comment on why)
+ * and only marks it up via esp_netif_action_connected(), which the driver's
+ * link-state callback fires asynchronously once the radio itself reports link
+ * up (morsemicro/halow 2.11.2-esp32-2's mmhalow.c: mmhalow_link_state(),
+ * L18-27). Nothing gates bring_up_datapath() on that - it only runs off the
+ * *uplink*'s state callback (on_uplink_state(), registered via
+ * uplink_wifi_set_state_callback()/uplink_halow_set_state_callback() below) -
+ * so a fast uplink can call in before the downlink has caught up.
+ *
+ * Observed on real hardware: the native Wi-Fi uplink got its DHCP lease
+ * ~50ms after esp_wifi came up, almost certainly before the HaLow AP netif
+ * was marked up. esp_netif_napt_enable() failed as a result - it "fails only
+ * if netif is down" (esp-idf esp_netif_lwip.c L2695/L2701-2706 at v5.5.1,
+ * confirmed against that source) - and cot_relay_start()'s IP_ADD_MEMBERSHIP
+ * failed right behind it for the same underlying reason.
+ *
+ * Bounded so a downlink that never comes up (radio init failure, no SSID
+ * configured) doesn't wedge this task forever - bring_up_datapath()'s
+ * existing "didn't finish, will retry on the next uplink reconnect" fallback
+ * still applies if this times out. */
+static bool wait_for_downlink_up(esp_netif_t *downlink_netif)
+{
+    for (int waited_ms = 0; waited_ms < DOWNLINK_UP_TIMEOUT_MS; waited_ms += DOWNLINK_UP_POLL_MS) {
+        if (esp_netif_is_netif_up(downlink_netif)) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(DOWNLINK_UP_POLL_MS));
+    }
+    return esp_netif_is_netif_up(downlink_netif);
+}
+
 static void bring_up_datapath(esp_netif_t *downlink_netif, esp_netif_t *uplink_netif,
                                const gw_cot_config_t *cot)
 {
     if (s_datapath_up) {
+        return;
+    }
+
+    /* Only worth waiting on a netif that exists - a NULL downlink means its
+     * role bring-up already failed to init the radio (e.g.
+     * bring_up_relay_role()'s "HaLow AP bring-up failed" path), and
+     * ip_forward_nat_init()/cot_relay_start() below already log that case
+     * clearly and immediately. No reason to sit through
+     * DOWNLINK_UP_TIMEOUT_MS first just to reach the same outcome. */
+    if (downlink_netif != NULL && !wait_for_downlink_up(downlink_netif)) {
+        ESP_LOGW(TAG, "downlink netif not up after %dms - datapath is incomplete, "
+                      "will retry on the next uplink reconnect",
+                 DOWNLINK_UP_TIMEOUT_MS);
         return;
     }
 
@@ -314,6 +373,53 @@ static esp_err_t datapath_task_start(void)
     return ESP_OK;
 }
 
+/* Forces a real reset pulse on the MM6108 HaLow radio before either role's
+ * bring-up ever touches it.
+ *
+ * mmhalow_init() (morsemicro/halow 2.11.2-esp32-2's mmhal_init(),
+ * components/shims/mmhal_os.c) drives CONFIG_MM_RESET_N low, and later -
+ * inside mmwlan_boot()'s internal call to mmhal_wlan_init(),
+ * components/shims/mmhal_wlan.c - raises it high again, with no deliberate
+ * delay of its own in between. That is a valid reset from a cold boot, where
+ * the radio was never running and RESET_N starts however the board's own
+ * power-on state leaves it. It is not necessarily valid after a software
+ * esp_restart(): that resets the ESP32's own core, not the radio module, so
+ * if the radio was left running from before the reboot (e.g. left "up and
+ * scannable" per uplink_halow.c's own log line), the low-to-high flip may be
+ * too short to actually resync it.
+ *
+ * Reproduced twice on real hardware: after a config-save reboot in
+ * GW_ROLE_RELAY, downlink_halow_ap_init() hung inside mmhal_init()/
+ * mmwlan_init() (before either ever logs anything) and tripped the interrupt
+ * watchdog in task 'ipc0' - every time the reboot was esp_restart() (reset
+ * reason "software (esp_restart)" or the panic handler's own auto-reboot).
+ * Only a true hardware reset (reset reason "USB peripheral", from the web
+ * flasher's own reset button - nothing this firmware does) came up clean,
+ * both times. This gives every boot, cold or warm, a deliberate low pulse
+ * before mmhalow_init() ever runs, long enough that whatever internal timing
+ * morselib uses afterward starts from a real reset instead of racing one.
+ *
+ * mmhal_init() re-configures and re-asserts this same pin low right after -
+ * harmless, since it's already low - so this can only add to the reset
+ * window, never shorten it. */
+static void halow_radio_force_reset(void)
+{
+    gpio_config_t io_conf = {
+        .pin_bit_mask = 1ULL << CONFIG_MM_RESET_N,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    esp_err_t err = gpio_config(&io_conf);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "HaLow radio reset gpio_config failed: %s", esp_err_to_name(err));
+        return;
+    }
+    gpio_set_level(CONFIG_MM_RESET_N, 0);
+    vTaskDelay(pdMS_TO_TICKS(50));
+}
+
 /* Today's original design: local 2.4GHz SoftAP for phones/ATAK devices,
  * HaLow STA uplink to whatever AP is configured. Unchanged behaviour from
  * before GW_ROLE existed - only pulled into its own function so app_main()
@@ -473,6 +579,10 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "console start failed: %s", esp_err_to_name(err));
     }
+
+    /* Before either role touches the radio - see this function's own doc
+     * comment for why a plain esp_restart() reboot isn't enough on its own. */
+    halow_radio_force_reset();
 
     /* Console is up regardless of role by this point - gwcfg-* always works
      * over USB, which matters most for GW_ROLE_RELAY: it has no SoftAP, so
