@@ -431,6 +431,44 @@ be `open`/`owe`/`sae` (no PSK), region is fixed `US`, and phones behind any leaf
 `10.41.x.x`) exactly as today — L2 bridging is still off the table on ESP32/lwIP regardless of which
 radio carries the uplink.
 
+#### What the Aug 22 relay run proved
+
+Two more hardware runs, both in GW_ROLE_RELAY, surfaced two further bugs — now fixed, not yet
+re-verified on hardware:
+
+- **A config-save reboot into GW_ROLE_RELAY could crash-loop before the HaLow AP ever came up.**
+  Reproduced twice: after saving config from the web UI (which reboots via `esp_restart()`),
+  `downlink_halow_ap_init()` hung inside `mmhalow_init()`'s `mmhal_init()`/`mmwlan_init()` — before
+  either logs anything — and tripped the interrupt watchdog in task `ipc0`, every time, saving a
+  core dump and rebooting straight into the same crash again. Only a true hardware reset (the web
+  flasher's own reset button, not this firmware — reset reason "USB peripheral") came up clean,
+  both times; every `esp_restart()`-driven reboot (reset reason "software (esp_restart)" or the
+  panic handler's own auto-reboot) failed identically. Root cause, read from the actual vendored
+  source (`morsemicro/halow` 2.11.2-esp32-2's `mmhal_os.c`/`mmhal_wlan.c`, not memory):
+  `mmhal_init()` drives `CONFIG_MM_RESET_N` low, and `mmwlan_boot()` later raises it high again via
+  its own internal call to `mmhal_wlan_init()` — with no deliberate delay of its own in between.
+  That is a valid reset from a cold boot, where the radio was never running. It is not necessarily
+  valid after a software `esp_restart()`, which resets the ESP32's own core but not the radio module
+  — so if the radio was still running from before the reboot (it can be; see `uplink_halow.c`'s "up
+  and scannable" log line), the low-to-high flip may be too short to actually resync it. Fixed by
+  `halow_radio_force_reset()` in `main/app_main.c`: an explicit, deliberate low pulse on
+  `CONFIG_MM_RESET_N` before either role's bring-up ever calls into `mmhalow_init()`, on every boot,
+  cold or warm.
+- **The datapath bring-up could lose a race against the HaLow AP's own bring-up.** On the run where
+  the boot-loop above didn't trigger, the Wi-Fi uplink got its DHCP lease ~50ms after `esp_wifi`
+  came up — before the HaLow AP downlink netif had been marked up at the lwIP level.
+  `esp_netif_napt_enable()` failed as a result (it "fails only if netif is down" — esp-idf
+  `esp_netif_lwip.c` L2695/2701-2706 at v5.5.1, confirmed against that source) and
+  `cot_relay_start()`'s `IP_ADD_MEMBERSHIP` failed right behind it for the same underlying reason.
+  `bring_up_datapath()` only ever gated on the *uplink's* state callback, with nothing checking the
+  downlink's own readiness. Fixed by `wait_for_downlink_up()` in `main/app_main.c`: a bounded poll
+  (5s, 100ms steps) on `esp_netif_is_netif_up()` for the downlink netif before either NAT or the CoT
+  relay touch it.
+
+Neither fix has a confirmed clean hardware run yet — the next relay test should specifically watch
+for a clean boot straight into "NAPT enabled on the SoftAP interface, uplink is default route" with
+no crash loop first.
+
 ## Settled decisions
 
 Recorded so they aren't relitigated, and so they aren't accidentally undone.

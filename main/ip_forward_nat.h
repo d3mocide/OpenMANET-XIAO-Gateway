@@ -41,8 +41,13 @@ extern "C" {
  * Plain IP forwarding between the two netifs is handled by lwIP itself once
  * CONFIG_LWIP_IP_FORWARD is set (sdkconfig.defaults); this call only adds the
  * NAT/NAPT layer plus default-route selection on top. Call once the uplink
- * holds a DHCP lease - esp_netif refuses to enable NAPT on a netif that
- * isn't up. */
+ * holds a DHCP lease *and* the downlink netif is up - esp_netif refuses to
+ * enable NAPT on a netif that isn't (esp-idf esp_netif_lwip.c L2695/2701-2706
+ * at v5.5.1: ip_napt_enable_netif() "fails only if netif is down"). The
+ * uplink getting its lease doesn't imply the downlink is up too - in
+ * GW_ROLE_RELAY they're two independent radios and the uplink can win that
+ * race - so app_main.c's bring_up_datapath() waits on the downlink netif
+ * before ever calling this. */
 esp_err_t ip_forward_nat_init(esp_netif_t *downlink_netif, esp_netif_t *uplink_netif);
 
 #ifdef __cplusplus
